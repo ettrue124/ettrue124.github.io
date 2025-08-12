@@ -33,9 +33,177 @@ class CityGenerator {
             local: { width: 6, color: '#85929e', lanes: 1 }
         };
         
+        // Terrain generation for realistic pathfinding
+        this.terrain = this.generateTerrain();
+        
         this.setupEventListeners();
         this.initializeSliders();
         this.generateCity();
+    }
+    
+    generateTerrain() {
+        // Generate realistic terrain using multiple noise layers
+        const terrain = [];
+        const width = Math.ceil(this.canvas.width / 10);
+        const height = Math.ceil(this.canvas.height / 10);
+        
+        for (let y = 0; y < height; y++) {
+            terrain[y] = [];
+            for (let x = 0; x < width; x++) {
+                // Multiple noise layers for realistic terrain
+                const baseNoise = this.noise(x * 0.02, y * 0.02);
+                const detailNoise = this.noise(x * 0.1, y * 0.1) * 0.3;
+                const mountainNoise = this.noise(x * 0.005, y * 0.005) * 2;
+                
+                let elevation = baseNoise + detailNoise + mountainNoise;
+                
+                // Create valleys and hills
+                const distanceFromCenter = Math.sqrt((x - width/2) ** 2 + (y - height/2) ** 2);
+                const centerInfluence = Math.max(0, 1 - distanceFromCenter / (Math.min(width, height) / 2));
+                elevation += centerInfluence * 0.5;
+                
+                terrain[y][x] = Math.max(0, Math.min(1, elevation));
+            }
+        }
+        
+        return terrain;
+    }
+    
+    noise(x, y) {
+        // Simple 2D noise function
+        const n = x + y * 57;
+        return (Math.sin(n) * 43758.5453) % 1;
+    }
+    
+    getElevation(x, y) {
+        const terrainX = Math.floor(x / 10);
+        const terrainY = Math.floor(y / 10);
+        
+        if (terrainX < 0 || terrainX >= this.terrain[0].length || 
+            terrainY < 0 || terrainY >= this.terrain.length) {
+            return 0.5;
+        }
+        
+        return this.terrain[terrainY][terrainX];
+    }
+    
+    calculatePathCost(fromX, fromY, toX, toY) {
+        const fromElevation = this.getElevation(fromX, fromY);
+        const toElevation = this.getElevation(toX, toY);
+        
+        // Calculate horizontal distance
+        const horizontalDist = Math.sqrt((toX - fromX) ** 2 + (toY - fromY) ** 2);
+        
+        // Calculate elevation difference
+        const elevationDiff = Math.abs(toElevation - fromElevation);
+        
+        // Calculate slope (rise over run)
+        const slope = elevationDiff / horizontalDist;
+        
+        // Non-linear cost function based on Rune's research
+        // Power of 2 penalizes steep slopes more than linearly
+        const slopeCost = Math.pow(slope * 10, 2);
+        
+        // Base cost is horizontal distance
+        const baseCost = horizontalDist;
+        
+        // Combine costs with slope penalty
+        return baseCost + slopeCost * 5;
+    }
+    
+    findNaturalPath(startX, startY, endX, endY, roadType) {
+        // A* pathfinding with terrain-aware cost function
+        const openSet = [{x: startX, y: startY, g: 0, h: 0, f: 0, parent: null}];
+        const closedSet = new Set();
+        const cameFrom = new Map();
+        const gScore = new Map();
+        const fScore = new Map();
+        
+        gScore.set(`${startX},${startY}`, 0);
+        fScore.set(`${startX},${startY}`, this.heuristic(startX, startY, endX, endY));
+        
+        while (openSet.length > 0) {
+            // Find node with lowest f score
+            openSet.sort((a, b) => a.f - b.f);
+            const current = openSet.shift();
+            
+            if (current.x === endX && current.y === endY) {
+                // Reconstruct path
+                return this.reconstructPath(cameFrom, current);
+            }
+            
+            const currentKey = `${current.x},${current.y}`;
+            closedSet.add(currentKey);
+            
+            // Check neighbors (8 directions)
+            const neighbors = this.getNeighbors(current.x, current.y);
+            
+            for (const neighbor of neighbors) {
+                const neighborKey = `${neighbor.x},${neighbor.y}`;
+                
+                if (closedSet.has(neighborKey)) continue;
+                
+                const tentativeG = gScore.get(currentKey) + 
+                    this.calculatePathCost(current.x, current.y, neighbor.x, neighbor.y);
+                
+                if (!gScore.has(neighborKey) || tentativeG < gScore.get(neighborKey)) {
+                    cameFrom.set(neighborKey, current);
+                    gScore.set(neighborKey, tentativeG);
+                    fScore.set(neighborKey, tentativeG + this.heuristic(neighbor.x, neighbor.y, endX, endY));
+                    
+                    const neighborNode = {
+                        x: neighbor.x, y: neighbor.y, 
+                        g: tentativeG, 
+                        h: this.heuristic(neighbor.x, neighbor.y, endX, endY),
+                        f: tentativeG + this.heuristic(neighbor.x, neighbor.y, endX, endY),
+                        parent: current
+                    };
+                    
+                    if (!openSet.find(n => n.x === neighbor.x && n.y === neighbor.y)) {
+                        openSet.push(neighborNode);
+                    }
+                }
+            }
+        }
+        
+        // No path found, return straight line
+        return [{x: startX, y: startY}, {x: endX, y: endY}];
+    }
+    
+    getNeighbors(x, y) {
+        const neighbors = [];
+        const step = 10; // Grid size
+        
+        // 8-directional movement
+        for (let dx = -1; dx <= 1; dx++) {
+            for (let dy = -1; dy <= 1; dy++) {
+                if (dx === 0 && dy === 0) continue;
+                
+                const newX = x + dx * step;
+                const newY = y + dy * step;
+                
+                if (newX >= 0 && newX < this.canvas.width && 
+                    newY >= 0 && newY < this.canvas.height) {
+                    neighbors.push({x: newX, y: newY});
+                }
+            }
+        }
+        
+        return neighbors;
+    }
+    
+    heuristic(x1, y1, x2, y2) {
+        // Manhattan distance heuristic
+        return Math.abs(x2 - x1) + Math.abs(y2 - y1);
+    }
+    
+    reconstructPath(cameFrom, current) {
+        const path = [];
+        while (current) {
+            path.unshift({x: current.x, y: current.y});
+            current = cameFrom.get(`${current.x},${current.y}`);
+        }
+        return path;
     }
     
     setupEventListeners() {
@@ -97,7 +265,7 @@ class CityGenerator {
         
         this.generateCityDetails();
         this.generateWaterBodies(settings.waterCount, settings.citySize);
-        this.generateRealisticRoadNetwork(settings.roadPattern, settings.citySize);
+        this.generateTerrainAwareRoadNetwork(settings.roadPattern, settings.citySize);
         this.generateBuildings(settings.buildingStyle, settings.citySize, settings.buildingDensity);
         this.generateParks(settings.citySize, settings.parkRatio);
         this.generateLandmarks(settings.citySize, settings.buildingStyle);
@@ -186,210 +354,296 @@ class CityGenerator {
         }
     }
     
-    generateRealisticRoadNetwork(pattern, size) {
+    generateTerrainAwareRoadNetwork(pattern, size) {
         switch(pattern) {
             case 'grid':
-                this.generateRealisticGrid(size);
+                this.generateTerrainAwareGrid(size);
                 break;
             case 'organic':
-                this.generateOrganicRoadNetwork(size);
+                this.generateTerrainAwareOrganic(size);
                 break;
             case 'radial':
-                this.generateRadialRoadNetwork(size);
+                this.generateTerrainAwareRadial(size);
                 break;
             case 'spiral':
-                this.generateSpiralRoadNetwork(size);
+                this.generateTerrainAwareSpiral(size);
                 break;
             case 'fractal':
-                this.generateFractalRoadNetwork(size);
+                this.generateTerrainAwareFractal(size);
                 break;
             case 'mixed':
-                this.generateMixedRoadNetwork(size);
+                this.generateTerrainAwareMixed(size);
                 break;
         }
     }
     
-    generateRealisticGrid(size) {
-        // Generate highways first (major arteries)
-        this.generateHighways(size);
+    generateTerrainAwareGrid(size) {
+        // Generate major highways using terrain-aware pathfinding
+        this.generateTerrainAwareHighways(size);
         
         // Generate arterial roads
-        this.generateArterialRoads(size);
+        this.generateTerrainAwareArterials(size);
         
         // Generate collector roads
-        this.generateCollectorRoads(size);
+        this.generateTerrainAwareCollectors(size);
         
         // Generate local streets
-        this.generateLocalStreets(size);
+        this.generateTerrainAwareLocals(size);
         
         // Add interchanges at major intersections
         this.generateInterchanges();
     }
     
-    generateHighways(size) {
-        const spacing = size === 'small' ? 120 : size === 'medium' ? 100 : 80;
+    generateTerrainAwareHighways(size) {
+        const numHighways = size === 'small' ? 2 : size === 'medium' ? 3 : 4;
         const roadType = this.roadTypes.highway;
         
         this.ctx.strokeStyle = roadType.color;
         this.ctx.lineWidth = roadType.width;
         this.ctx.lineCap = 'round';
         
-        // Major highways
-        const highways = [];
+        // Create highway network using terrain-aware pathfinding
+        const highwayPoints = this.generateHighwayPoints(numHighways);
         
-        // Horizontal highways
-        for (let y = spacing; y < this.canvas.height; y += spacing * 2) {
-            highways.push({
-                x1: 0, y1: y, x2: this.canvas.width, y2: y,
-                type: 'highway', direction: 'horizontal'
+        for (let i = 0; i < highwayPoints.length - 1; i++) {
+            const start = highwayPoints[i];
+            const end = highwayPoints[i + 1];
+            
+            const path = this.findNaturalPath(start.x, start.y, end.x, end.y, roadType);
+            this.drawTerrainAwareRoad(path, roadType);
+            
+            this.cityData.roads.push({
+                path: path,
+                type: 'highway',
+                direction: 'terrain-aware'
             });
         }
-        
-        // Vertical highways
-        for (let x = spacing; x < this.canvas.width; x += spacing * 2) {
-            highways.push({
-                x1: x, y1: 0, x2: x, y2: this.canvas.height,
-                type: 'highway', direction: 'vertical'
-            });
-        }
-        
-        // Draw highways with lanes
-        highways.forEach(highway => {
-            this.drawRoadWithLanes(highway, roadType);
-            this.cityData.roads.push(highway);
-        });
     }
     
-    generateArterialRoads(size) {
-        const spacing = size === 'small' ? 80 : size === 'medium' ? 60 : 50;
+    generateHighwayPoints(numHighways) {
+        const points = [];
+        
+        // Add edge points for highways to cross the city
+        points.push({x: 0, y: this.canvas.height / 2});
+        points.push({x: this.canvas.width, y: this.canvas.height / 2});
+        points.push({x: this.canvas.width / 2, y: 0});
+        points.push({x: this.canvas.width / 2, y: this.canvas.height});
+        
+        // Add some internal connection points
+        for (let i = 0; i < numHighways - 2; i++) {
+            points.push({
+                x: Math.random() * this.canvas.width,
+                y: Math.random() * this.canvas.height
+            });
+        }
+        
+        return points;
+    }
+    
+    generateTerrainAwareArterials(size) {
+        const numArterials = size === 'small' ? 4 : size === 'medium' ? 6 : 8;
         const roadType = this.roadTypes.arterial;
         
         this.ctx.strokeStyle = roadType.color;
         this.ctx.lineWidth = roadType.width;
         
-        // Arterial roads between highways
-        const arterials = [];
-        
-        // Horizontal arterials
-        for (let y = spacing; y < this.canvas.height; y += spacing) {
-            if (y % (spacing * 2) !== 0) { // Avoid overlapping with highways
-                arterials.push({
-                    x1: 0, y1: y, x2: this.canvas.width, y2: y,
-                    type: 'arterial', direction: 'horizontal'
-                });
-            }
+        for (let i = 0; i < numArterials; i++) {
+            const startX = Math.random() * this.canvas.width;
+            const startY = Math.random() * this.canvas.height;
+            const endX = Math.random() * this.canvas.width;
+            const endY = Math.random() * this.canvas.height;
+            
+            const path = this.findNaturalPath(startX, startY, endX, endY, roadType);
+            this.drawTerrainAwareRoad(path, roadType);
+            
+            this.cityData.roads.push({
+                path: path,
+                type: 'arterial',
+                direction: 'terrain-aware'
+            });
         }
-        
-        // Vertical arterials
-        for (let x = spacing; x < this.canvas.width; x += spacing) {
-            if (x % (spacing * 2) !== 0) { // Avoid overlapping with highways
-                arterials.push({
-                    x1: x, y1: 0, x2: x, y2: this.canvas.height,
-                    type: 'arterial', direction: 'vertical'
-                });
-            }
-        }
-        
-        arterials.forEach(arterial => {
-            this.drawRoadWithLanes(arterial, roadType);
-            this.cityData.roads.push(arterial);
-        });
     }
     
-    generateCollectorRoads(size) {
-        const spacing = size === 'small' ? 60 : size === 'medium' ? 40 : 30;
+    generateTerrainAwareCollectors(size) {
+        const numCollectors = size === 'small' ? 8 : size === 'medium' ? 12 : 16;
         const roadType = this.roadTypes.collector;
         
         this.ctx.strokeStyle = roadType.color;
         this.ctx.lineWidth = roadType.width;
         
-        // Collector roads in smaller grid
-        const collectors = [];
-        
-        for (let x = spacing; x < this.canvas.width; x += spacing) {
-            for (let y = spacing; y < this.canvas.height; y += spacing) {
-                if (Math.random() < 0.3) { // 30% chance of collector road
-                    collectors.push({
-                        x1: x, y1: y, x2: x + spacing, y2: y,
-                        type: 'collector', direction: 'horizontal'
-                    });
-                    collectors.push({
-                        x1: x, y1: y, x2: x, y2: y + spacing,
-                        type: 'collector', direction: 'vertical'
-                    });
-                }
-            }
+        for (let i = 0; i < numCollectors; i++) {
+            const startX = Math.random() * this.canvas.width;
+            const startY = Math.random() * this.canvas.height;
+            const endX = Math.random() * this.canvas.width;
+            const endY = Math.random() * this.canvas.height;
+            
+            const path = this.findNaturalPath(startX, startY, endX, endY, roadType);
+            this.drawTerrainAwareRoad(path, roadType);
+            
+            this.cityData.roads.push({
+                path: path,
+                type: 'collector',
+                direction: 'terrain-aware'
+            });
         }
-        
-        collectors.forEach(collector => {
-            this.drawRoadWithLanes(collector, roadType);
-            this.cityData.roads.push(collector);
-        });
     }
     
-    generateLocalStreets(size) {
-        const spacing = size === 'small' ? 40 : size === 'medium' ? 30 : 25;
+    generateTerrainAwareLocals(size) {
+        const numLocals = size === 'small' ? 15 : size === 'medium' ? 25 : 35;
         const roadType = this.roadTypes.local;
         
         this.ctx.strokeStyle = roadType.color;
         this.ctx.lineWidth = roadType.width;
         
-        // Local streets in residential areas
-        const locals = [];
-        
-        for (let x = spacing; x < this.canvas.width; x += spacing) {
-            for (let y = spacing; y < this.canvas.height; y += spacing) {
-                if (Math.random() < 0.2) { // 20% chance of local street
-                    locals.push({
-                        x1: x, y1: y, x2: x + spacing, y2: y,
-                        type: 'local', direction: 'horizontal'
-                    });
-                    locals.push({
-                        x1: x, y1: y, x2: x, y2: y + spacing,
-                        type: 'local', direction: 'vertical'
-                    });
-                }
-            }
+        for (let i = 0; i < numLocals; i++) {
+            const startX = Math.random() * this.canvas.width;
+            const startY = Math.random() * this.canvas.height;
+            const endX = Math.random() * this.canvas.width;
+            const endY = Math.random() * this.canvas.height;
+            
+            const path = this.findNaturalPath(startX, startY, endX, endY, roadType);
+            this.drawTerrainAwareRoad(path, roadType);
+            
+            this.cityData.roads.push({
+                path: path,
+                type: 'local',
+                direction: 'terrain-aware'
+            });
         }
-        
-        locals.forEach(local => {
-            this.drawRoadWithLanes(local, roadType);
-            this.cityData.roads.push(local);
-        });
     }
     
-    drawRoadWithLanes(road, roadType) {
-        const laneWidth = roadType.width / roadType.lanes;
+    drawTerrainAwareRoad(path, roadType) {
+        if (path.length < 2) return;
         
-        // Draw main road
+        // Draw main road path
         this.ctx.beginPath();
-        this.ctx.moveTo(road.x1, road.y1);
-        this.ctx.lineTo(road.x2, road.y2);
+        this.ctx.moveTo(path[0].x, path[0].y);
+        
+        for (let i = 1; i < path.length; i++) {
+            this.ctx.lineTo(path[i].x, path[i].y);
+        }
+        
         this.ctx.stroke();
         
         // Draw lane dividers
+        this.drawTerrainAwareLaneDividers(path, roadType);
+    }
+    
+    drawTerrainAwareLaneDividers(path, roadType) {
+        const laneWidth = roadType.width / roadType.lanes;
+        
         this.ctx.strokeStyle = '#ffffff';
         this.ctx.lineWidth = 1;
         
         for (let i = 1; i < roadType.lanes; i++) {
             const offset = (i * laneWidth) - (roadType.width / 2);
             
-            if (road.direction === 'horizontal') {
-                this.ctx.beginPath();
-                this.ctx.moveTo(road.x1, road.y1 + offset);
-                this.ctx.lineTo(road.x2, road.y2 + offset);
-                this.ctx.stroke();
-            } else {
-                this.ctx.beginPath();
-                this.ctx.moveTo(road.x1 + offset, road.y1);
-                this.ctx.lineTo(road.x2 + offset, road.y2);
-                this.ctx.stroke();
+            this.ctx.beginPath();
+            this.ctx.moveTo(path[0].x, path[0].y + offset);
+            
+            for (let j = 1; j < path.length; j++) {
+                this.ctx.lineTo(path[j].x, path[j].y + offset);
             }
+            
+            this.ctx.stroke();
         }
         
         // Reset stroke style
         this.ctx.strokeStyle = roadType.color;
         this.ctx.lineWidth = roadType.width;
+    }
+    
+    generateTerrainAwareOrganic(size) {
+        // Generate organic roads that follow terrain contours
+        this.generateTerrainAwareArterials(size);
+        this.generateTerrainAwareCollectors(size);
+        this.generateTerrainAwareLocals(size);
+    }
+    
+    generateTerrainAwareRadial(size) {
+        const centerX = this.canvas.width / 2;
+        const centerY = this.canvas.height / 2;
+        const numRadials = size === 'small' ? 6 : size === 'medium' ? 8 : 12;
+        const roadType = this.roadTypes.highway;
+        
+        this.ctx.strokeStyle = roadType.color;
+        this.ctx.lineWidth = roadType.width;
+        
+        for (let i = 0; i < numRadials; i++) {
+            const angle = (i / numRadials) * 2 * Math.PI;
+            const endX = centerX + Math.cos(angle) * this.canvas.width * 0.8;
+            const endY = centerY + Math.sin(angle) * this.canvas.height * 0.8;
+            
+            const path = this.findNaturalPath(centerX, centerY, endX, endY, roadType);
+            this.drawTerrainAwareRoad(path, roadType);
+            
+            this.cityData.roads.push({
+                path: path,
+                type: 'highway',
+                direction: 'radial'
+            });
+        }
+    }
+    
+    generateTerrainAwareSpiral(size) {
+        const centerX = this.canvas.width / 2;
+        const centerY = this.canvas.height / 2;
+        const maxRadius = Math.min(this.canvas.width, this.canvas.height) / 2;
+        const roadType = this.roadTypes.highway;
+        
+        this.ctx.strokeStyle = roadType.color;
+        this.ctx.lineWidth = roadType.width;
+        
+        // Generate spiral using terrain-aware pathfinding
+        const spiralPoints = [];
+        for (let angle = 0; angle < 6 * Math.PI; angle += 0.2) {
+            const radius = (angle / (6 * Math.PI)) * maxRadius;
+            const x = centerX + radius * Math.cos(angle);
+            const y = centerY + radius * Math.sin(angle);
+            spiralPoints.push({x: x, y: y});
+        }
+        
+        this.drawTerrainAwareRoad(spiralPoints, roadType);
+        
+        this.cityData.roads.push({
+            path: spiralPoints,
+            type: 'highway',
+            direction: 'spiral'
+        });
+    }
+    
+    generateTerrainAwareFractal(size) {
+        this.generateFractalBranch(this.canvas.width / 2, this.canvas.height / 2, 
+                                  Math.min(this.canvas.width, this.canvas.height) / 3, 0, 4);
+    }
+    
+    generateFractalBranch(x, y, length, angle, depth) {
+        if (depth === 0) return;
+        
+        const endX = x + length * Math.cos(angle);
+        const endY = y + length * Math.sin(angle);
+        
+        const roadType = depth > 2 ? this.roadTypes.arterial : 
+                        depth > 1 ? this.roadTypes.collector : this.roadTypes.local;
+        
+        const path = this.findNaturalPath(x, y, endX, endY, roadType);
+        this.drawTerrainAwareRoad(path, roadType);
+        
+        this.cityData.roads.push({
+            path: path,
+            type: roadType === this.roadTypes.arterial ? 'arterial' : 
+                  roadType === this.roadTypes.collector ? 'collector' : 'local',
+            direction: 'fractal'
+        });
+        
+        const newLength = length * 0.7;
+        this.generateFractalBranch(endX, endY, newLength, angle + Math.PI/4, depth - 1);
+        this.generateFractalBranch(endX, endY, newLength, angle - Math.PI/4, depth - 1);
+    }
+    
+    generateTerrainAwareMixed(size) {
+        this.generateTerrainAwareGrid(size);
+        this.generateTerrainAwareOrganic(size);
     }
     
     generateInterchanges() {
@@ -398,8 +652,8 @@ class CityGenerator {
         
         highways.forEach(highway1 => {
             highways.forEach(highway2 => {
-                if (highway1 !== highway2 && highway1.direction !== highway2.direction) {
-                    const intersection = this.findIntersection(highway1, highway2);
+                if (highway1 !== highway2) {
+                    const intersection = this.findPathIntersection(highway1.path, highway2.path);
                     if (intersection) {
                         this.drawInterchange(intersection);
                     }
@@ -408,13 +662,38 @@ class CityGenerator {
         });
     }
     
-    findIntersection(road1, road2) {
-        // Simple intersection calculation
-        if (road1.direction === 'horizontal' && road2.direction === 'vertical') {
-            return { x: road2.x1, y: road1.y1 };
-        } else if (road1.direction === 'vertical' && road2.direction === 'horizontal') {
-            return { x: road1.x1, y: road2.y1 };
+    findPathIntersection(path1, path2) {
+        // Simple intersection detection between two paths
+        for (let i = 0; i < path1.length - 1; i++) {
+            for (let j = 0; j < path2.length - 1; j++) {
+                const intersection = this.lineIntersection(
+                    path1[i], path1[i + 1], path2[j], path2[j + 1]
+                );
+                if (intersection) return intersection;
+            }
         }
+        return null;
+    }
+    
+    lineIntersection(p1, p2, p3, p4) {
+        const x1 = p1.x, y1 = p1.y;
+        const x2 = p2.x, y2 = p2.y;
+        const x3 = p3.x, y3 = p3.y;
+        const x4 = p4.x, y4 = p4.y;
+        
+        const denom = (x1 - x2) * (y3 - y4) - (y1 - y2) * (x3 - x4);
+        if (Math.abs(denom) < 0.001) return null;
+        
+        const t = ((x1 - x3) * (y3 - y4) - (y1 - y3) * (x3 - x4)) / denom;
+        const u = -((x1 - x2) * (y1 - y3) - (y1 - y2) * (x1 - x3)) / denom;
+        
+        if (t >= 0 && t <= 1 && u >= 0 && u <= 1) {
+            return {
+                x: x1 + t * (x2 - x1),
+                y: y1 + t * (y2 - y1)
+            };
+        }
+        
         return null;
     }
     
@@ -442,306 +721,6 @@ class CityGenerator {
             this.ctx.lineTo(endX, endY);
             this.ctx.stroke();
         }
-    }
-    
-    generateOrganicRoadNetwork(size) {
-        // Generate curved arterial roads
-        this.generateCurvedArterials(size);
-        
-        // Generate organic collector roads
-        this.generateOrganicCollectors(size);
-        
-        // Generate local streets
-        this.generateOrganicLocals(size);
-    }
-    
-    generateCurvedArterials(size) {
-        const numArterials = size === 'small' ? 3 : size === 'medium' ? 5 : 7;
-        const roadType = this.roadTypes.arterial;
-        
-        this.ctx.strokeStyle = roadType.color;
-        this.ctx.lineWidth = roadType.width;
-        
-        for (let i = 0; i < numArterials; i++) {
-            const arterial = this.createCurvedRoad(roadType);
-            this.drawCurvedRoad(arterial, roadType);
-            this.cityData.roads.push(arterial);
-        }
-    }
-    
-    createCurvedRoad(roadType) {
-        const startX = Math.random() * this.canvas.width;
-        const startY = Math.random() * this.canvas.height;
-        const endX = Math.random() * this.canvas.width;
-        const endY = Math.random() * this.canvas.height;
-        
-        // Create control points for curved path
-        const controlPoints = [];
-        const numPoints = 3 + Math.floor(Math.random() * 3);
-        
-        for (let i = 0; i < numPoints; i++) {
-            controlPoints.push({
-                x: Math.random() * this.canvas.width,
-                y: Math.random() * this.canvas.height
-            });
-        }
-        
-        return {
-            start: { x: startX, y: startY },
-            end: { x: endX, y: endY },
-            controlPoints: controlPoints,
-            type: roadType
-        };
-    }
-    
-    drawCurvedRoad(road, roadType) {
-        this.ctx.beginPath();
-        this.ctx.moveTo(road.start.x, road.start.y);
-        
-        // Create smooth curve through control points
-        for (let i = 0; i < road.controlPoints.length; i++) {
-            const cp = road.controlPoints[i];
-            const nextCp = road.controlPoints[i + 1] || road.end;
-            
-            this.ctx.quadraticCurveTo(cp.x, cp.y, nextCp.x, nextCp.y);
-        }
-        
-        this.ctx.stroke();
-        
-        // Draw lane dividers for curved roads
-        this.drawCurvedLaneDividers(road, roadType);
-    }
-    
-    drawCurvedLaneDividers(road, roadType) {
-        const laneWidth = roadType.width / roadType.lanes;
-        
-        this.ctx.strokeStyle = '#ffffff';
-        this.ctx.lineWidth = 1;
-        
-        for (let i = 1; i < roadType.lanes; i++) {
-            const offset = (i * laneWidth) - (roadType.width / 2);
-            
-            // Simplified lane divider for curved roads
-            this.ctx.beginPath();
-            this.ctx.moveTo(road.start.x, road.start.y + offset);
-            
-            for (let j = 0; j < road.controlPoints.length; j++) {
-                const cp = road.controlPoints[j];
-                const nextCp = road.controlPoints[j + 1] || road.end;
-                
-                this.ctx.quadraticCurveTo(cp.x, cp.y + offset, nextCp.x, nextCp.y + offset);
-            }
-            
-            this.ctx.stroke();
-        }
-    }
-    
-    generateOrganicCollectors(size) {
-        const numCollectors = size === 'small' ? 8 : size === 'medium' ? 12 : 16;
-        const roadType = this.roadTypes.collector;
-        
-        this.ctx.strokeStyle = roadType.color;
-        this.ctx.lineWidth = roadType.width;
-        
-        for (let i = 0; i < numCollectors; i++) {
-            const collector = this.createCurvedRoad(roadType);
-            this.drawCurvedRoad(collector, roadType);
-            this.cityData.roads.push(collector);
-        }
-    }
-    
-    generateOrganicLocals(size) {
-        const numLocals = size === 'small' ? 15 : size === 'medium' ? 25 : 35;
-        const roadType = this.roadTypes.local;
-        
-        this.ctx.strokeStyle = roadType.color;
-        this.ctx.lineWidth = roadType.width;
-        
-        for (let i = 0; i < numLocals; i++) {
-            const local = this.createCurvedRoad(roadType);
-            this.drawCurvedRoad(local, roadType);
-            this.cityData.roads.push(local);
-        }
-    }
-    
-    generateRadialRoadNetwork(size) {
-        const centerX = this.canvas.width / 2;
-        const centerY = this.canvas.height / 2;
-        const numRadials = size === 'small' ? 6 : size === 'medium' ? 8 : 12;
-        
-        // Generate radial highways
-        this.generateRadialHighways(centerX, centerY, numRadials);
-        
-        // Generate concentric roads
-        this.generateConcentricRoads(centerX, centerY, size);
-        
-        // Generate connecting roads
-        this.generateRadialConnectors(centerX, centerY, numRadials);
-    }
-    
-    generateRadialHighways(centerX, centerY, numRadials) {
-        const roadType = this.roadTypes.highway;
-        
-        this.ctx.strokeStyle = roadType.color;
-        this.ctx.lineWidth = roadType.width;
-        
-        for (let i = 0; i < numRadials; i++) {
-            const angle = (i / numRadials) * 2 * Math.PI;
-            const endX = centerX + Math.cos(angle) * this.canvas.width;
-            const endY = centerY + Math.sin(angle) * this.canvas.height;
-            
-            const highway = {
-                x1: centerX, y1: centerY, x2: endX, y2: endY,
-                type: 'highway', direction: 'radial'
-            };
-            
-            this.drawRoadWithLanes(highway, roadType);
-            this.cityData.roads.push(highway);
-        }
-    }
-    
-    generateConcentricRoads(centerX, centerY, size) {
-        const numCircles = size === 'small' ? 3 : size === 'medium' ? 4 : 5;
-        const roadType = this.roadTypes.arterial;
-        
-        this.ctx.strokeStyle = roadType.color;
-        this.ctx.lineWidth = roadType.width;
-        
-        for (let i = 1; i <= numCircles; i++) {
-            const radius = (this.canvas.width / 2) * (i / numCircles);
-            
-            this.ctx.beginPath();
-            this.ctx.arc(centerX, centerY, radius, 0, 2 * Math.PI);
-            this.ctx.stroke();
-            
-            this.cityData.roads.push({
-                x1: centerX, y1: centerY, x2: centerX, y2: centerY,
-                type: 'arterial', direction: 'concentric', radius: radius
-            });
-        }
-    }
-    
-    generateRadialConnectors(centerX, centerY, numRadials) {
-        const roadType = this.roadTypes.collector;
-        
-        this.ctx.strokeStyle = roadType.color;
-        this.ctx.lineWidth = roadType.width;
-        
-        for (let i = 0; i < numRadials; i++) {
-            const angle1 = (i / numRadials) * 2 * Math.PI;
-            const angle2 = ((i + 1) / numRadials) * 2 * Math.PI;
-            
-            const radius = this.canvas.width / 3;
-            const x1 = centerX + Math.cos(angle1) * radius;
-            const y1 = centerY + Math.sin(angle1) * radius;
-            const x2 = centerX + Math.cos(angle2) * radius;
-            const y2 = centerY + Math.sin(angle2) * radius;
-            
-            const connector = {
-                x1: x1, y1: y1, x2: x2, y2: y2,
-                type: 'collector', direction: 'connector'
-            };
-            
-            this.drawRoadWithLanes(connector, roadType);
-            this.cityData.roads.push(connector);
-        }
-    }
-    
-    generateSpiralRoadNetwork(size) {
-        const centerX = this.canvas.width / 2;
-        const centerY = this.canvas.height / 2;
-        const maxRadius = Math.min(this.canvas.width, this.canvas.height) / 2;
-        
-        // Generate spiral highway
-        this.generateSpiralHighway(centerX, centerY, maxRadius);
-        
-        // Generate connecting roads
-        this.generateSpiralConnectors(centerX, centerY, maxRadius);
-    }
-    
-    generateSpiralHighway(centerX, centerY, maxRadius) {
-        const roadType = this.roadTypes.highway;
-        
-        this.ctx.strokeStyle = roadType.color;
-        this.ctx.lineWidth = roadType.width;
-        
-        this.ctx.beginPath();
-        this.ctx.moveTo(centerX, centerY);
-        
-        for (let angle = 0; angle < 6 * Math.PI; angle += 0.1) {
-            const radius = (angle / (6 * Math.PI)) * maxRadius;
-            const x = centerX + radius * Math.cos(angle);
-            const y = centerY + radius * Math.sin(angle);
-            this.ctx.lineTo(x, y);
-        }
-        
-        this.ctx.stroke();
-        
-        this.cityData.roads.push({
-            x1: centerX, y1: centerY, x2: centerX, y2: centerY,
-            type: 'highway', direction: 'spiral'
-        });
-    }
-    
-    generateSpiralConnectors(centerX, centerY, maxRadius) {
-        const roadType = this.roadTypes.collector;
-        
-        this.ctx.strokeStyle = roadType.color;
-        this.ctx.lineWidth = roadType.width;
-        
-        for (let i = 0; i < 8; i++) {
-            const angle = (i / 8) * 2 * Math.PI;
-            const radius = maxRadius * 0.7;
-            const x = centerX + Math.cos(angle) * radius;
-            const y = centerY + Math.sin(angle) * radius;
-            
-            const connector = {
-                x1: centerX, y1: centerY, x2: x, y2: y,
-                type: 'collector', direction: 'radial'
-            };
-            
-            this.drawRoadWithLanes(connector, roadType);
-            this.cityData.roads.push(connector);
-        }
-    }
-    
-    generateFractalRoadNetwork(size) {
-        this.generateFractalBranch(this.canvas.width / 2, this.canvas.height / 2, 
-                                  Math.min(this.canvas.width, this.canvas.height) / 3, 0, 4);
-    }
-    
-    generateFractalBranch(x, y, length, angle, depth) {
-        if (depth === 0) return;
-        
-        const endX = x + length * Math.cos(angle);
-        const endY = y + length * Math.sin(angle);
-        
-        const roadType = depth > 2 ? this.roadTypes.arterial : 
-                        depth > 1 ? this.roadTypes.collector : this.roadTypes.local;
-        
-        this.ctx.strokeStyle = roadType.color;
-        this.ctx.lineWidth = roadType.width;
-        
-        this.ctx.beginPath();
-        this.ctx.moveTo(x, y);
-        this.ctx.lineTo(endX, endY);
-        this.ctx.stroke();
-        
-        this.cityData.roads.push({
-            x1: x, y1: y, x2: endX, y2: endY,
-            type: roadType === this.roadTypes.arterial ? 'arterial' : 
-                  roadType === this.roadTypes.collector ? 'collector' : 'local',
-            direction: 'fractal'
-        });
-        
-        const newLength = length * 0.7;
-        this.generateFractalBranch(endX, endY, newLength, angle + Math.PI/4, depth - 1);
-        this.generateFractalBranch(endX, endY, newLength, angle - Math.PI/4, depth - 1);
-    }
-    
-    generateMixedRoadNetwork(size) {
-        this.generateRealisticGrid(size);
-        this.generateOrganicRoadNetwork(size);
     }
     
     generateBuildings(style, size, density) {
@@ -787,9 +766,21 @@ class CityGenerator {
     isOnRoad(x, y, width, height) {
         const roadBuffer = 15;
         for (let road of this.cityData.roads) {
-            if (x < road.x2 + roadBuffer && x + width > road.x1 - roadBuffer &&
-                y < road.y2 + roadBuffer && y + height > road.y1 - roadBuffer) {
-                return true;
+            if (road.path) {
+                // Check if building intersects with any road path
+                for (let i = 0; i < road.path.length - 1; i++) {
+                    const roadX1 = road.path[i].x;
+                    const roadY1 = road.path[i].y;
+                    const roadX2 = road.path[i + 1].x;
+                    const roadY2 = road.path[i + 1].y;
+                    
+                    if (x < Math.max(roadX1, roadX2) + roadBuffer && 
+                        x + width > Math.min(roadX1, roadX2) - roadBuffer &&
+                        y < Math.max(roadY1, roadY2) + roadBuffer && 
+                        y + height > Math.min(roadY1, roadY2) - roadBuffer) {
+                        return true;
+                    }
+                }
             }
         }
         return false;
