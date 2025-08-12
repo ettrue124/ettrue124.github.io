@@ -3,60 +3,169 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Procedural City Generator</title>
+    <title>Advanced Procedural City Generator</title>
     <link rel="stylesheet" href="styles.css">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
 </head>
 <body>
     <div class="container">
         <header>
-            <h1>🏙️ Procedural City Generator</h1>
-            <p>Generate unique cities using procedural algorithms</p>
+            <h1><i class="fas fa-city"></i> Advanced City Generator</h1>
+            <p>Create stunning procedural cities with advanced algorithms</p>
         </header>
         
-        <div class="controls">
-            <div class="control-group">
-                <label for="citySize">City Size:</label>
-                <select id="citySize">
-                    <option value="small">Small</option>
-                    <option value="medium" selected>Medium</option>
-                    <option value="large">Large</option>
-                </select>
+        <div class="controls-panel">
+            <div class="control-section">
+                <h3><i class="fas fa-cog"></i> City Settings</h3>
+                <div class="control-group">
+                    <label for="citySize">City Size:</label>
+                    <select id="citySize">
+                        <option value="small">Small Town</option>
+                        <option value="medium" selected>Medium City</option>
+                        <option value="large">Large Metropolis</option>
+                        <option value="mega">Mega City</option>
+                    </select>
+                </div>
+                
+                <div class="control-group">
+                    <label for="buildingStyle">Architecture Style:</label>
+                    <select id="buildingStyle">
+                        <option value="modern">Modern</option>
+                        <option value="classical">Classical</option>
+                        <option value="futuristic">Futuristic</option>
+                        <option value="gothic">Gothic</option>
+                        <option value="asian">Asian</option>
+                        <option value="mixed">Mixed</option>
+                    </select>
+                </div>
+                
+                <div class="control-group">
+                    <label for="roadPattern">Road Layout:</label>
+                    <select id="roadPattern">
+                        <option value="grid">Grid</option>
+                        <option value="organic">Organic</option>
+                        <option value="radial">Radial</option>
+                        <option value="spiral">Spiral</option>
+                        <option value="fractal">Fractal</option>
+                        <option value="mixed">Mixed</option>
+                    </select>
+                </div>
             </div>
             
-            <div class="control-group">
-                <label for="buildingStyle">Building Style:</label>
-                <select id="buildingStyle">
-                    <option value="modern">Modern</option>
-                    <option value="classical">Classical</option>
-                    <option value="futuristic">Futuristic</option>
-                    <option value="mixed">Mixed</option>
-                </select>
+            <div class="control-section">
+                <h3><i class="fas fa-sliders-h"></i> Advanced Options</h3>
+                <div class="control-group">
+                    <label for="buildingDensity">Building Density:</label>
+                    <input type="range" id="buildingDensity" min="0.3" max="1.0" step="0.1" value="0.7">
+                    <span id="densityValue">0.7</span>
+                </div>
+                
+                <div class="control-group">
+                    <label for="parkRatio">Park Ratio:</label>
+                    <input type="range" id="parkRatio" min="0.05" max="0.3" step="0.05" value="0.15">
+                    <span id="parkValue">0.15</span>
+                </div>
+                
+                <div class="control-group">
+                    <label for="waterBodies">Water Bodies:</label>
+                    <input type="range" id="waterBodies" min="0" max="5" step="1" value="2">
+                    <span id="waterValue">2</span>
+                </div>
             </div>
             
-            <div class="control-group">
-                <label for="roadPattern">Road Pattern:</label>
-                <select id="roadPattern">
-                    <option value="grid">Grid</option>
-                    <option value="organic">Organic</option>
-                    <option value="radial">Radial</option>
-                    <option value="mixed">Mixed</option>
-                </select>
+            <div class="control-section">
+                <h3><i class="fas fa-palette"></i> Visual Settings</h3>
+                <div class="control-group">
+                    <label for="timeOfDay">Time of Day:</label>
+                    <select id="timeOfDay">
+                        <option value="day">Day</option>
+                        <option value="sunset">Sunset</option>
+                        <option value="night">Night</option>
+                        <option value="rainy">Rainy</option>
+                    </select>
+                </div>
+                
+                <div class="control-group">
+                    <label for="renderQuality">Render Quality:</label>
+                    <select id="renderQuality">
+                        <option value="low">Low</option>
+                        <option value="medium" selected>Medium</option>
+                        <option value="high">High</option>
+                        <option value="ultra">Ultra</option>
+                    </select>
+                </div>
             </div>
-            
-            <button id="generateBtn" class="generate-btn">Generate New City</button>
+        </div>
+        
+        <div class="action-buttons">
+            <button id="generateBtn" class="generate-btn">
+                <i class="fas fa-magic"></i> Generate New City
+            </button>
+            <button id="saveBtn" class="save-btn">
+                <i class="fas fa-download"></i> Save City
+            </button>
+            <button id="shareBtn" class="share-btn">
+                <i class="fas fa-share"></i> Share
+            </button>
         </div>
         
         <div class="city-container">
-            <canvas id="cityCanvas" width="800" height="600"></canvas>
+            <canvas id="cityCanvas" width="1000" height="700"></canvas>
+            <div class="canvas-overlay">
+                <div class="loading-spinner" id="loadingSpinner">
+                    <i class="fas fa-spinner fa-spin"></i>
+                    <span>Generating City...</span>
+                </div>
+            </div>
         </div>
         
-        <div class="info-panel">
-            <h3>City Statistics</h3>
-            <div id="cityStats">
-                <p>Buildings: <span id="buildingCount">0</span></p>
-                <p>Roads: <span id="roadCount">0</span></p>
-                <p>Parks: <span id="parkCount">0</span></p>
-                <p>Population: <span id="population">0</span></p>
+        <div class="info-panels">
+            <div class="info-panel">
+                <h3><i class="fas fa-chart-bar"></i> City Statistics</h3>
+                <div id="cityStats">
+                    <div class="stat-item">
+                        <i class="fas fa-building"></i>
+                        <span>Buildings: <strong id="buildingCount">0</strong></span>
+                    </div>
+                    <div class="stat-item">
+                        <i class="fas fa-road"></i>
+                        <span>Roads: <strong id="roadCount">0</strong></span>
+                    </div>
+                    <div class="stat-item">
+                        <i class="fas fa-tree"></i>
+                        <span>Parks: <strong id="parkCount">0</strong></span>
+                    </div>
+                    <div class="stat-item">
+                        <i class="fas fa-users"></i>
+                        <span>Population: <strong id="population">0</strong></span>
+                    </div>
+                    <div class="stat-item">
+                        <i class="fas fa-water"></i>
+                        <span>Water Bodies: <strong id="waterCount">0</strong></span>
+                    </div>
+                    <div class="stat-item">
+                        <i class="fas fa-ruler-combined"></i>
+                        <span>Area: <strong id="cityArea">0</strong> km²</span>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="info-panel">
+                <h3><i class="fas fa-info-circle"></i> City Details</h3>
+                <div id="cityDetails">
+                    <div class="detail-item">
+                        <span>City Name: <strong id="cityName">Loading...</strong></span>
+                    </div>
+                    <div class="detail-item">
+                        <span>Founded: <strong id="cityFounded">Loading...</strong></span>
+                    </div>
+                    <div class="detail-item">
+                        <span>Climate: <strong id="cityClimate">Loading...</strong></span>
+                    </div>
+                    <div class="detail-item">
+                        <span>Economy: <strong id="cityEconomy">Loading...</strong></span>
+                    </div>
+                </div>
             </div>
         </div>
     </div>
