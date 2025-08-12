@@ -38,6 +38,50 @@ class CityGenerator {
         this.generateCity();
     }
     
+    // --- network housekeeping ---
+    resetNetwork() {
+        this.cityData.roads = [];
+        this.segments = [];                 // flat list of {a,b,type,tag}
+        this.segGrid = Object.create(null); // spatial index of segments
+        this.gridSize = 64;
+    }
+    
+    gridKey(x,y) { 
+        return `${Math.floor(x/this.gridSize)},${Math.floor(y/this.gridSize)}`; 
+    }
+    
+    clipRoundedRect(x,y,w,h,r) {
+        const c = this.ctx;
+        c.save(); 
+        c.beginPath();
+        c.moveTo(x+r,y);
+        c.arcTo(x+w,y,x+w,y+h,r);
+        c.arcTo(x+w,y+h,x,y+h,r);
+        c.arcTo(x,y+h,x,y,r);
+        c.arcTo(x,y,x+w,y,r);
+        c.closePath(); 
+        c.clip();
+    }
+    
+    // Coherent 2D noise (so "organic" isn't jagged)
+    noise(x,y) {
+        function hash(ix,iy) {
+            let n = (ix*374761393 + iy*668265263) ^ 0x5bd1e995;
+            n = (n ^ (n>>>13)) * 1274126177;
+            return ((n ^ (n>>>16)) >>> 0) / 4294967295; // 0..1
+        }
+        function lerp(a,b,t) { return a + (b-a)*t; }
+        function smooth(t) { return t*t*(3-2*t); }
+
+        const xi = Math.floor(x), yi = Math.floor(y);
+        const xf = x - xi,        yf = y - yi;
+        const h00 = hash(xi,yi),  h10 = hash(xi+1,yi);
+        const h01 = hash(xi,yi+1),h11 = hash(xi+1,yi+1);
+
+        const u = smooth(xf), v = smooth(yf);
+        return lerp( lerp(h00,h10,u), lerp(h01,h11,u), v );
+    }
+    
     setupEventListeners() {
         document.getElementById('generateBtn').addEventListener('click', () => {
             if (!this.isGenerating) {
@@ -87,6 +131,7 @@ class CityGenerator {
     
     performGeneration() {
         this.clearCanvas();
+        this.resetNetwork(); // Reset network at start
         
         this.cityData = {
             buildings: [], roads: [], parks: [], waterBodies: [],
@@ -101,9 +146,14 @@ class CityGenerator {
         this.generatePoissonDiscBuildings(settings.buildingStyle, settings.citySize, settings.buildingDensity);
         this.generateParks(settings.citySize, settings.parkRatio);
         this.generateLandmarks(settings.citySize, settings.buildingStyle);
+        this.redrawWaterOnTop(); // Draw water on top to mask roads
         
         this.calculateStats();
         this.updateStats();
+    }
+    
+    redrawWaterOnTop() { 
+        for(const w of this.cityData.waterBodies) this.drawWaterBody(w); 
     }
     
     getSettings() {
@@ -188,11 +238,8 @@ class CityGenerator {
     
     // Field-guided road generation (production-grade approach)
     generateFieldGuidedRoads(pattern, size) {
-        // Set up canvas clipping
-        this.ctx.save();
-        this.ctx.beginPath();
-        this.ctx.rect(0, 0, this.canvas.width, this.canvas.height);
-        this.ctx.clip();
+        // Set up rounded canvas clipping
+        this.clipRoundedRect(14, 14, this.canvas.width - 28, this.canvas.height - 28, 18);
         
         // Generate tensor field based on pattern
         this.tensorField = this.createTensorField(pattern);
@@ -210,6 +257,179 @@ class CityGenerator {
         this.planarizeNetwork();
         
         this.ctx.restore();
+    }
+    
+    // Step A: Generate avenues via field tracing
+    generateAvenues(size) {
+        const numSeeds = size === 'small' ? 3 : size === 'medium' ? 5 : 7;
+        const roadType = this.roadTypes.highway;
+        
+        // Generate seed points at density ridges
+        const seeds = this.generateDensitySeeds(numSeeds);
+        
+        for (const seed of seeds) {
+            // Trace forward and backward along major direction
+            const forwardTrace = this.traceStreamline(seed, (orientation) => orientation.major);
+            const backwardTrace = this.traceStreamline(seed, (orientation) => [-orientation.major[0], -orientation.major[1]]);
+            
+            if (forwardTrace) {
+                this.addPolyline(forwardTrace, roadType, 'avenue');
+            }
+            
+            if (backwardTrace) {
+                this.addPolyline(backwardTrace, roadType, 'avenue');
+            }
+        }
+    }
+    
+    generateDensitySeeds(numSeeds) {
+        const seeds = [];
+        
+        // Add edge seeds
+        seeds.push({ x: 0, y: this.canvas.height / 2 });
+        seeds.push({ x: this.canvas.width, y: this.canvas.height / 2 });
+        seeds.push({ x: this.canvas.width / 2, y: 0 });
+        seeds.push({ x: this.canvas.width / 2, y: this.canvas.height });
+        
+        // Add density-based seeds
+        for (let i = 0; i < numSeeds - 4; i++) {
+            let bestSeed = null;
+            let bestDensity = 0;
+            
+            // Sample multiple candidates
+            for (let attempt = 0; attempt < 50; attempt++) {
+                const x = Math.random() * this.canvas.width;
+                const y = Math.random() * this.canvas.height;
+                const density = this.getDensity(x, y);
+                
+                if (density > bestDensity && !this.isBlocked(x, y)) {
+                    bestDensity = density;
+                    bestSeed = { x, y };
+                }
+            }
+            
+            if (bestSeed) {
+                seeds.push(bestSeed);
+            }
+        }
+        
+        return seeds;
+    }
+    
+    // Step B: Generate arterials across the grain
+    generateArterials(size) {
+        const roadType = this.roadTypes.arterial;
+        
+        // Sample points along existing avenues
+        const arterialSeeds = this.sampleAlongRoads(this.cityData.roads.filter(r => r.type === this.roadTypes.highway), 8);
+        
+        for (const seed of arterialSeeds) {
+            // Trace along minor direction
+            const trace = this.traceStreamline(seed, (orientation) => orientation.minor, 800, 6);
+            
+            if (trace) {
+                this.addPolyline(trace, roadType, 'arterial');
+            }
+        }
+    }
+    
+    sampleAlongRoads(roads, numSamples) {
+        const samples = [];
+        
+        for (const road of roads) {
+            if (road.points && road.points.length > 1) {
+                for (let i = 0; i < numSamples; i++) {
+                    const t = i / (numSamples - 1);
+                    const index = Math.floor(t * (road.points.length - 1));
+                    const nextIndex = Math.min(index + 1, road.points.length - 1);
+                    const localT = t * (road.points.length - 1) - index;
+                    
+                    const point = {
+                        x: road.points[index].x * (1 - localT) + road.points[nextIndex].x * localT,
+                        y: road.points[index].y * (1 - localT) + road.points[nextIndex].y * localT
+                    };
+                    
+                    samples.push(point);
+                }
+            }
+        }
+        
+        return samples;
+    }
+    
+    // Step C: Generate local streets
+    generateLocalStreets(size) {
+        const roadType = this.roadTypes.local;
+        
+        // Generate local nodes using Poisson sampling
+        const localNodes = this.generatePoissonDiscSampling(20, 40)
+            .filter(p => !this.isBlocked(p.x, p.y));
+        
+        // Connect with KNN within radius
+        const localEdges = this.createLocalEdges(localNodes, 2, 80)
+            .filter(e => !this.segmentIntersectsWater(e.start, e.end));
+        
+        for (const edge of localEdges) {
+            this.addPolyline([edge.start, edge.end], roadType, 'local');
+        }
+    }
+    
+    createLocalEdges(nodes, k, radius) {
+        const edges = [];
+        const seen = new Set();
+        
+        for (let i = 0; i < nodes.length; i++) {
+            const neighbors = this.findNeighborsWithinRadius(nodes, i, radius);
+            neighbors.sort((a, b) => a.distance - b.distance);
+            
+            for (let j = 0; j < Math.min(k, neighbors.length); j++) {
+                const neighbor = neighbors[j];
+                const a = Math.min(i, neighbor.index);
+                const b = Math.max(i, neighbor.index);
+                const key = `${a}|${b}`;
+                
+                if (!seen.has(key)) {
+                    seen.add(key);
+                    edges.push({
+                        start: nodes[i],
+                        end: nodes[neighbor.index]
+                    });
+                }
+            }
+        }
+        
+        return edges;
+    }
+    
+    findNeighborsWithinRadius(nodes, centerIndex, radius) {
+        const neighbors = [];
+        const center = nodes[centerIndex];
+        
+        for (let i = 0; i < nodes.length; i++) {
+            if (i === centerIndex) continue;
+            
+            const distance = Math.sqrt(
+                Math.pow(center.x - nodes[i].x, 2) + Math.pow(center.y - nodes[i].y, 2)
+            );
+            
+            if (distance <= radius) {
+                neighbors.push({ index: i, distance: distance });
+            }
+        }
+        
+        return neighbors;
+    }
+    
+    // Step D: Planarize and clean the network
+    planarizeNetwork() {
+        // Remove duplicate edges
+        this.removeDuplicateEdges();
+        
+        // Remove short stubs
+        this.removeShortStubs(30);
+        
+        // Smooth roads with cubic splines
+        this.smoothRoads();
     }
     
     createTensorField(pattern) {
@@ -371,364 +591,105 @@ class CityGenerator {
         return Math.max(0, 1 - centerDistance * 2);
     }
     
-    snapToRoad(point, epsilon = 20) {
-        // Snap point to nearest existing road within epsilon
-        for (const road of this.cityData.roads) {
-            const distance = this.pointToLineDistance(point, road.start, road.end);
-            if (distance < epsilon) {
-                const snapped = this.closestPointOnLine(point, road.start, road.end);
-                return { point: snapped, snapped: true };
+    // distance/projection to segment
+    distToSeg(p,a,b) {
+        const vx=b.x-a.x, vy=b.y-a.y;
+        const wx=p.x-a.x, wy=p.y-a.y;
+        const len2=vx*vx+vy*vy || 1e-6;
+        let t=(vx*wx+vy*wy)/len2; t=Math.max(0,Math.min(1,t));
+        const q={x:a.x+vx*t,y:a.y+vy*t};
+        const dx=p.x-q.x, dy=p.y-q.y;
+        return { d: Math.hypot(dx,dy), q, t };
+    }
+
+    // spatial index
+    insertSeg(seg) {
+        const minx=Math.min(seg.a.x,seg.b.x), maxx=Math.max(seg.a.x,seg.b.x);
+        const miny=Math.min(seg.a.y,seg.b.y), maxy=Math.max(seg.a.y,seg.b.y);
+        const gx0=Math.floor(minx/this.gridSize), gx1=Math.floor(maxx/this.gridSize);
+        const gy0=Math.floor(miny/this.gridSize), gy1=Math.floor(maxy/this.gridSize);
+        for(let gx=gx0; gx<=gx1; gx++)
+            for(let gy=gy0; gy<=gy1; gy++){
+                const k=`${gx},${gy}`;
+                (this.segGrid[k]||(this.segGrid[k]=[])).push(seg);
             }
+    }
+
+    querySegsInAABB(minx,miny,maxx,maxy) {
+        const gx0=Math.floor(minx/this.gridSize), gx1=Math.floor(maxx/this.gridSize);
+        const gy0=Math.floor(miny/this.gridSize), gy1=Math.floor(maxy/this.gridSize);
+        const out=new Set();
+        for(let gx=gx0; gx<=gx1; gx++)
+            for(let gy=gy0; gy<=gy1; gy++){
+                const k=`${gx},${gy}`; const arr=this.segGrid[k]; if(!arr) continue;
+                for(const s of arr) out.add(s);
+            }
+        return [...out];
+    }
+
+    // Split at intersections while tracing (planarize on the fly)
+    segIntersect(a,b,c,d) {
+        const s1x=b.x-a.x, s1y=b.y-a.y, s2x=d.x-c.x, s2y=d.y-c.y;
+        const denom = (-s2x*s1y + s1x*s2y);
+        if (Math.abs(denom) < 1e-6) return null;
+        const s = (-s1y*(a.x-c.x) + s1x*(a.y-c.y)) / denom;
+        const t = ( s2x*(a.y-c.y) - s2y*(a.x-c.x)) / denom;
+        if (s > 0 && s < 1 && t > 0 && t < 1) {
+            return { x: a.x + t*s1x, y: a.y + t*s1y };
         }
-        return { point: point, snapped: false };
+        return null;
     }
-    
-    pointToLineDistance(point, lineStart, lineEnd) {
-        const A = point.x - lineStart.x;
-        const B = point.y - lineStart.y;
-        const C = lineEnd.x - lineStart.x;
-        const D = lineEnd.y - lineStart.y;
-        
-        const dot = A * C + B * D;
-        const lenSq = C * C + D * D;
-        
-        if (lenSq === 0) return Math.sqrt(A * A + B * B);
-        
-        const param = dot / lenSq;
-        
-        let xx, yy;
-        if (param < 0) {
-            xx = lineStart.x;
-            yy = lineStart.y;
-        } else if (param > 1) {
-            xx = lineEnd.x;
-            yy = lineEnd.y;
-        } else {
-            xx = lineStart.x + param * C;
-            yy = lineStart.y + param * D;
+
+    firstIntersectionAlong(p,q) {
+        const minx=Math.min(p.x,q.x)-2, maxx=Math.max(p.x,q.x)+2;
+        const miny=Math.min(p.y,q.y)-2, maxy=Math.max(p.y,q.y)+2;
+        const segs=this.querySegsInAABB(minx,miny,maxx,maxy);
+        for(const s of segs){
+            const hit=this.segIntersect(p,q,s.a,s.b);
+            if (hit) return hit;
         }
-        
-        const dx = point.x - xx;
-        const dy = point.y - yy;
-        return Math.sqrt(dx * dx + dy * dy);
+        return null;
     }
-    
-    closestPointOnLine(point, lineStart, lineEnd) {
-        const A = point.x - lineStart.x;
-        const B = point.y - lineStart.y;
-        const C = lineEnd.x - lineStart.x;
-        const D = lineEnd.y - lineStart.y;
-        
-        const dot = A * C + B * D;
-        const lenSq = C * C + D * D;
-        
-        if (lenSq === 0) return { x: lineStart.x, y: lineStart.y };
-        
-        const param = Math.max(0, Math.min(1, dot / lenSq));
-        
-        return {
-            x: lineStart.x + param * C,
-            y: lineStart.y + param * D
-        };
-    }
-    
-    // Streamline tracer (core of field-guided growth)
-    traceStreamline(seed, directionFn, maxLength = 1200, stepSize = 6) {
-        const points = [{ x: seed.x, y: seed.y }];
-        let currentPoint = { x: seed.x, y: seed.y };
-        let length = 0;
-        
-        while (length < maxLength) {
-            const orientation = this.tensorField.getOrientation(currentPoint.x, currentPoint.y);
-            const direction = directionFn(orientation);
-            
-            // Normalize direction
-            const magnitude = Math.sqrt(direction[0] * direction[0] + direction[1] * direction[1]);
-            if (magnitude === 0) break;
-            
-            const normalizedDir = [direction[0] / magnitude, direction[1] / magnitude];
-            
-            // Calculate next point
-            const nextPoint = {
-                x: currentPoint.x + normalizedDir[0] * stepSize,
-                y: currentPoint.y + normalizedDir[1] * stepSize
-            };
-            
-            // Check if blocked
-            if (this.isBlocked(nextPoint.x, nextPoint.y)) {
-                break;
-            }
-            
-            // Snap to existing roads
-            const snapped = this.snapToRoad(nextPoint, 15);
-            points.push(snapped.point);
-            currentPoint = snapped.point;
-            length += stepSize;
-            
-            // Stop if snapped to existing road
-            if (snapped.snapped) {
-                break;
-            }
-            
-            // Enforce minimum curvature radius
-            if (points.length >= 3) {
-                const curvature = this.calculateCurvature(
-                    points[points.length - 3],
-                    points[points.length - 2],
-                    points[points.length - 1]
-                );
-                if (curvature > 0.1) { // Max curvature threshold
-                    break;
-                }
-            }
+
+    // Segment-level snapping (not just endpoints)
+    snapToRoad(p, epsilon=14) {
+        const segs = this.querySegsInAABB(p.x-epsilon, p.y-epsilon, p.x+epsilon, p.y+epsilon);
+        let best=null, bestD=epsilon;
+        for(const s of segs){
+            const {d,q} = this.distToSeg(p, s.a, s.b);
+            if (d < bestD){ bestD=d; best=q; }
         }
-        
-        return points.length > 1 ? points : null;
+        return best ? { point: best, snapped: true } : { point: p, snapped: false };
     }
-    
-    calculateCurvature(p1, p2, p3) {
-        const v1x = p2.x - p1.x;
-        const v1y = p2.y - p1.y;
-        const v2x = p3.x - p2.x;
-        const v2y = p3.y - p2.y;
-        
-        const cross = v1x * v2y - v1y * v2x;
-        const dot = v1x * v2x + v1y * v2y;
-        
-        const angle = Math.atan2(cross, dot);
-        return Math.abs(angle);
-    }
-    
-    // Step A: Generate avenues via field tracing
-    generateAvenues(size) {
-        const numSeeds = size === 'small' ? 3 : size === 'medium' ? 5 : 7;
-        const roadType = this.roadTypes.highway;
-        
-        // Generate seed points at density ridges
-        const seeds = this.generateDensitySeeds(numSeeds);
-        
-        this.ctx.strokeStyle = roadType.color;
-        this.ctx.lineWidth = roadType.width;
-        this.ctx.lineCap = 'round';
-        
-        for (const seed of seeds) {
-            // Trace forward and backward along major direction
-            const forwardTrace = this.traceStreamline(seed, (orientation) => orientation.major);
-            const backwardTrace = this.traceStreamline(seed, (orientation) => [-orientation.major[0], -orientation.major[1]]);
-            
-            if (forwardTrace) {
-                this.drawRoadPath(forwardTrace, roadType);
-                this.cityData.roads.push({
-                    start: forwardTrace[0],
-                    end: forwardTrace[forwardTrace.length - 1],
-                    points: forwardTrace,
-                    type: roadType,
-                    direction: 'avenue'
-                });
-            }
-            
-            if (backwardTrace) {
-                this.drawRoadPath(backwardTrace, roadType);
-                this.cityData.roads.push({
-                    start: backwardTrace[0],
-                    end: backwardTrace[backwardTrace.length - 1],
-                    points: backwardTrace,
-                    type: roadType,
-                    direction: 'avenue'
-                });
-            }
+
+    // Add polylines as segments and draw once
+    addPolyline(points, roadType, tag) {
+        // register segments
+        for(let i=0;i<points.length-1;i++){
+            const seg={ a:points[i], b:points[i+1], type:roadType, tag };
+            this.segments.push(seg);
+            this.insertSeg(seg);
         }
+        // logical record for stats
+        this.cityData.roads.push({
+            start: points[0], end: points.at(-1), points, type: roadType, direction: tag
+        });
+        // draw in one pass
+        const c=this.ctx;
+        c.save();
+        c.strokeStyle = roadType.color;
+        c.lineWidth   = roadType.width;
+        c.lineCap     = 'round';
+        c.lineJoin    = 'round';
+        c.beginPath();
+        c.moveTo(points[0].x, points[0].y);
+        for(let i=1;i<points.length;i++) c.lineTo(points[i].x, points[i].y);
+        c.stroke(); c.restore();
     }
-    
-    generateDensitySeeds(numSeeds) {
-        const seeds = [];
-        
-        // Add edge seeds
-        seeds.push({ x: 0, y: this.canvas.height / 2 });
-        seeds.push({ x: this.canvas.width, y: this.canvas.height / 2 });
-        seeds.push({ x: this.canvas.width / 2, y: 0 });
-        seeds.push({ x: this.canvas.width / 2, y: this.canvas.height });
-        
-        // Add density-based seeds
-        for (let i = 0; i < numSeeds - 4; i++) {
-            let bestSeed = null;
-            let bestDensity = 0;
-            
-            // Sample multiple candidates
-            for (let attempt = 0; attempt < 50; attempt++) {
-                const x = Math.random() * this.canvas.width;
-                const y = Math.random() * this.canvas.height;
-                const density = this.getDensity(x, y);
-                
-                if (density > bestDensity && !this.isBlocked(x, y)) {
-                    bestDensity = density;
-                    bestSeed = { x, y };
-                }
-            }
-            
-            if (bestSeed) {
-                seeds.push(bestSeed);
-            }
-        }
-        
-        return seeds;
-    }
-    
-    // Step B: Generate arterials across the grain
-    generateArterials(size) {
-        const roadType = this.roadTypes.arterial;
-        
-        this.ctx.strokeStyle = roadType.color;
-        this.ctx.lineWidth = roadType.width;
-        this.ctx.lineCap = 'round';
-        
-        // Sample points along existing avenues
-        const arterialSeeds = this.sampleAlongRoads(this.cityData.roads.filter(r => r.type === this.roadTypes.highway), 8);
-        
-        for (const seed of arterialSeeds) {
-            // Trace along minor direction
-            const trace = this.traceStreamline(seed, (orientation) => orientation.minor, 800, 6);
-            
-            if (trace) {
-                this.drawRoadPath(trace, roadType);
-                this.cityData.roads.push({
-                    start: trace[0],
-                    end: trace[trace.length - 1],
-                    points: trace,
-                    type: roadType,
-                    direction: 'arterial'
-                });
-            }
-        }
-    }
-    
-    sampleAlongRoads(roads, numSamples) {
-        const samples = [];
-        
-        for (const road of roads) {
-            if (road.points && road.points.length > 1) {
-                for (let i = 0; i < numSamples; i++) {
-                    const t = i / (numSamples - 1);
-                    const index = Math.floor(t * (road.points.length - 1));
-                    const nextIndex = Math.min(index + 1, road.points.length - 1);
-                    const localT = t * (road.points.length - 1) - index;
-                    
-                    const point = {
-                        x: road.points[index].x * (1 - localT) + road.points[nextIndex].x * localT,
-                        y: road.points[index].y * (1 - localT) + road.points[nextIndex].y * localT
-                    };
-                    
-                    samples.push(point);
-                }
-            }
-        }
-        
-        return samples;
-    }
-    
-    // Step C: Generate local streets
-    generateLocalStreets(size) {
-        const roadType = this.roadTypes.local;
-        
-        this.ctx.strokeStyle = roadType.color;
-        this.ctx.lineWidth = roadType.width;
-        this.ctx.lineCap = 'round';
-        
-        // Generate local nodes using Poisson sampling
-        const localNodes = this.generatePoissonDiscSampling(20, 40);
-        
-        // Connect with KNN within radius
-        const localEdges = this.createLocalEdges(localNodes, 2, 80);
-        
-        for (const edge of localEdges) {
-            this.ctx.beginPath();
-            this.ctx.moveTo(edge.start.x, edge.start.y);
-            this.ctx.lineTo(edge.end.x, edge.end.y);
-            this.ctx.stroke();
-            
-            this.cityData.roads.push({
-                start: edge.start,
-                end: edge.end,
-                type: roadType,
-                direction: 'local'
-            });
-        }
-    }
-    
-    createLocalEdges(nodes, k, radius) {
-        const edges = [];
-        const seen = new Set();
-        
-        for (let i = 0; i < nodes.length; i++) {
-            const neighbors = this.findNeighborsWithinRadius(nodes, i, radius);
-            neighbors.sort((a, b) => a.distance - b.distance);
-            
-            for (let j = 0; j < Math.min(k, neighbors.length); j++) {
-                const neighbor = neighbors[j];
-                const a = Math.min(i, neighbor.index);
-                const b = Math.max(i, neighbor.index);
-                const key = `${a}|${b}`;
-                
-                if (!seen.has(key)) {
-                    seen.add(key);
-                    edges.push({
-                        start: nodes[i],
-                        end: nodes[neighbor.index]
-                    });
-                }
-            }
-        }
-        
-        return edges;
-    }
-    
-    findNeighborsWithinRadius(nodes, centerIndex, radius) {
-        const neighbors = [];
-        const center = nodes[centerIndex];
-        
-        for (let i = 0; i < nodes.length; i++) {
-            if (i === centerIndex) continue;
-            
-            const distance = Math.sqrt(
-                Math.pow(center.x - nodes[i].x, 2) + Math.pow(center.y - nodes[i].y, 2)
-            );
-            
-            if (distance <= radius) {
-                neighbors.push({ index: i, distance: distance });
-            }
-        }
-        
-        return neighbors;
-    }
-    
-    // Step D: Planarize and clean the network
-    planarizeNetwork() {
-        // Remove duplicate edges
-        this.removeDuplicateEdges();
-        
-        // Remove short stubs
-        this.removeShortStubs(30);
-        
-        // Smooth roads with cubic splines
-        this.smoothRoads();
-    }
-    
-    removeDuplicateEdges() {
-        const uniqueRoads = [];
-        const seen = new Set();
-        
-        for (const road of this.cityData.roads) {
-            const key1 = `${road.start.x},${road.start.y}-${road.end.x},${road.end.y}`;
-            const key2 = `${road.end.x},${road.end.y}-${road.start.x},${road.start.y}`;
-            
-            if (!seen.has(key1) && !seen.has(key2)) {
-                seen.add(key1);
-                seen.add(key2);
-                uniqueRoads.push(road);
-            }
-        }
-        
-        this.cityData.roads = uniqueRoads;
+
+    // Stronger duplicate removal (float-safe)
+    roundPt(p) { 
+        return {x: Math.round(p.x*2)/2, y: Math.round(p.y*2)/2}; 
     }
     
     removeShortStubs(minLength) {
@@ -1105,6 +1066,177 @@ class CityGenerator {
                 alert('City URL copied to clipboard!');
             });
         }
+    }
+
+    // Streamline tracer (core of field-guided growth)
+    traceStreamline(seed, directionFn, maxLength = 1200, stepSize = 6) {
+        const points = [{ x: seed.x, y: seed.y }];
+        let currentPoint = { x: seed.x, y: seed.y };
+        let length = 0;
+        
+        while (length < maxLength) {
+            const orientation = this.tensorField.getOrientation(currentPoint.x, currentPoint.y);
+            const direction = directionFn(orientation);
+            
+            // Normalize direction
+            const magnitude = Math.sqrt(direction[0] * direction[0] + direction[1] * direction[1]);
+            if (magnitude === 0) break;
+            
+            const normalizedDir = [direction[0] / magnitude, direction[1] / magnitude];
+            
+            // Calculate next point
+            const nextPoint = {
+                x: currentPoint.x + normalizedDir[0] * stepSize,
+                y: currentPoint.y + normalizedDir[1] * stepSize
+            };
+            
+            // If the new step crosses an existing road, stop at the intersection
+            const ix = this.firstIntersectionAlong(currentPoint, nextPoint);
+            if (ix) { 
+                points.push(ix); 
+                return points; 
+            }
+            
+            // Check if blocked
+            if (this.isBlocked(nextPoint.x, nextPoint.y)) {
+                break;
+            }
+            
+            // Snap to existing roads
+            const snapped = this.snapToRoad(nextPoint, 15);
+            points.push(snapped.point);
+            currentPoint = snapped.point;
+            length += stepSize;
+            
+            // Stop if snapped to existing road
+            if (snapped.snapped) {
+                break;
+            }
+            
+            // Enforce minimum curvature radius
+            if (points.length >= 3) {
+                const curvature = this.calculateCurvature(
+                    points[points.length - 3],
+                    points[points.length - 2],
+                    points[points.length - 1]
+                );
+                if (curvature > 0.2) { // Lowered threshold to prevent ultra-sharp kinks
+                    break;
+                }
+            }
+        }
+        
+        return points.length > 1 ? points : null;
+    }
+    
+    calculateCurvature(p1, p2, p3) {
+        const v1x = p2.x - p1.x;
+        const v1y = p2.y - p1.y;
+        const v2x = p3.x - p2.x;
+        const v2y = p3.y - p2.y;
+        
+        const cross = v1x * v2y - v1y * v2x;
+        const dot = v1x * v2x + v1y * v2y;
+        
+        const angle = Math.atan2(cross, dot);
+        return Math.abs(angle);
+    }
+
+    // Water intersection detection
+    segmentIntersectsWater(start, end) {
+        for (const water of this.cityData.waterBodies) {
+            if (water.type === 'river') {
+                // Check if line segment intersects with river rectangle
+                const riverLeft = water.x;
+                const riverRight = water.x + water.width;
+                const riverTop = water.y;
+                const riverBottom = water.y + water.height;
+                
+                // Check if line segment intersects river bounds
+                if (this.lineIntersectsRect(start, end, riverLeft, riverTop, riverRight, riverBottom)) {
+                    return true;
+                }
+            } else if (water.type === 'lake') {
+                // Check if line segment intersects with lake ellipse
+                const lakeCenterX = water.x + water.width / 2;
+                const lakeCenterY = water.y + water.height / 2;
+                const lakeRadiusX = water.width / 2;
+                const lakeRadiusY = water.height / 2;
+                
+                if (this.lineIntersectsEllipse(start, end, lakeCenterX, lakeCenterY, lakeRadiusX, lakeRadiusY)) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+    
+    lineIntersectsRect(start, end, left, top, right, bottom) {
+        // Check if line segment intersects rectangle bounds
+        const x1 = start.x, y1 = start.y;
+        const x2 = end.x, y2 = end.y;
+        
+        // Check if both points are outside the same edge
+        if (x1 < left && x2 < left) return false;
+        if (x1 > right && x2 > right) return false;
+        if (y1 < top && y2 < top) return false;
+        if (y1 > bottom && y2 > bottom) return false;
+        
+        // Check if line intersects any of the rectangle edges
+        const edges = [
+            [{x: left, y: top}, {x: right, y: top}],
+            [{x: right, y: top}, {x: right, y: bottom}],
+            [{x: right, y: bottom}, {x: left, y: bottom}],
+            [{x: left, y: bottom}, {x: left, y: top}]
+        ];
+        
+        for (const edge of edges) {
+            if (this.segIntersect(start, end, edge[0], edge[1])) {
+                return true;
+            }
+        }
+        
+        return false;
+    }
+    
+    lineIntersectsEllipse(start, end, centerX, centerY, radiusX, radiusY) {
+        // Simplified ellipse intersection check
+        const x1 = start.x - centerX, y1 = start.y - centerY;
+        const x2 = end.x - centerX, y2 = end.y - centerY;
+        
+        // Check if either endpoint is inside ellipse
+        const d1 = (x1 * x1) / (radiusX * radiusX) + (y1 * y1) / (radiusY * radiusY);
+        const d2 = (x2 * x2) / (radiusX * radiusX) + (y2 * y2) / (radiusY * radiusY);
+        
+        if (d1 <= 1 || d2 <= 1) return true;
+        
+        // Check if line segment intersects ellipse (simplified)
+        const dx = x2 - x1, dy = y2 - y1;
+        const a = (dx * dx) / (radiusX * radiusX) + (dy * dy) / (radiusY * radiusY);
+        const b = 2 * (x1 * dx) / (radiusX * radiusX) + 2 * (y1 * dy) / (radiusY * radiusY);
+        const c = (x1 * x1) / (radiusX * radiusX) + (y1 * y1) / (radiusY * radiusY) - 1;
+        
+        const discriminant = b * b - 4 * a * c;
+        if (discriminant < 0) return false;
+        
+        const t1 = (-b + Math.sqrt(discriminant)) / (2 * a);
+        const t2 = (-b - Math.sqrt(discriminant)) / (2 * a);
+        
+        return (t1 >= 0 && t1 <= 1) || (t2 >= 0 && t2 <= 1);
+    }
+    
+    removeDuplicateEdges() {
+        const seen = new Set(), keep = [];
+        for (const r of this.cityData.roads) {
+            const s = this.roundPt(r.start), e = this.roundPt(r.end);
+            const k1 = `${s.x},${s.y}-${e.x},${e.y}`, k2 = `${e.x},${e.y}-${s.x},${s.y}`;
+            if (!seen.has(k1) && !seen.has(k2)) { 
+                seen.add(k1); 
+                seen.add(k2); 
+                keep.push(r); 
+            }
+        }
+        this.cityData.roads = keep;
     }
 }
 
