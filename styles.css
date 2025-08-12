@@ -25,10 +25,6 @@ body {
     min-height: 100vh;
     padding: 20px;
     overflow-x: auto;
-    /* Performance optimizations */
-    will-change: scroll-position;
-    -webkit-font-smoothing: antialiased;
-    -moz-osx-font-smoothing: grayscale;
 }
 
 .container {
@@ -40,10 +36,6 @@ body {
     backdrop-filter: blur(20px);
     border: 1px solid var(--glass-border);
     box-shadow: 0 20px 40px rgba(0, 0, 0, 0.3);
-    /* Performance optimizations */
-    will-change: transform;
-    transform: translateZ(0);
-    -webkit-transform: translateZ(0);
 }
 
 header {
@@ -60,19 +52,11 @@ header h1 {
     background-clip: text;
     font-weight: 700;
     text-shadow: 0 4px 8px rgba(0, 0, 0, 0.3);
-    /* Performance optimizations */
-    will-change: transform;
-    transform: translateZ(0);
-    -webkit-transform: translateZ(0);
 }
 
 header h1 i {
     margin-right: 15px;
     animation: pulse 2s infinite;
-    /* Performance optimizations */
-    will-change: transform;
-    transform: translateZ(0);
-    -webkit-transform: translateZ(0);
 }
 
 header p {
@@ -87,10 +71,6 @@ header p {
     grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
     gap: 25px;
     margin-bottom: 30px;
-    /* Performance optimizations */
-    will-change: transform;
-    transform: translateZ(0);
-    -webkit-transform: translateZ(0);
 }
 
 .control-section {
@@ -99,10 +79,6 @@ header p {
     padding: 25px;
     border: 1px solid var(--glass-border);
     backdrop-filter: blur(10px);
-    /* Performance optimizations */
-    will-change: transform;
-    transform: translateZ(0);
-    -webkit-transform: translateZ(0);
 }
 
 .control-section h3 {
@@ -138,18 +114,12 @@ header p {
     cursor: pointer;
     transition: all 0.3s ease;
     border: 1px solid transparent;
-    /* Performance optimizations */
-    will-change: transform, opacity;
-    transform: translateZ(0);
-    -webkit-transform: translateZ(0);
 }
 
 .control-group select:hover,
 .control-group input[type="range"]:hover {
     background: rgba(255, 255, 255, 0.15);
     border-color: var(--accent-color);
-    transform: translateY(-1px) translateZ(0);
-    -webkit-transform: translateY(-1px) translateZ(0);
 }
 
 .control-group select:focus,
@@ -165,10 +135,6 @@ header p {
     background: rgba(255, 255, 255, 0.2);
     border-radius: 3px;
     outline: none;
-    /* Performance optimizations */
-    will-change: transform;
-    transform: translateZ(0);
-    -webkit-transform: translateZ(0);
 }
 
 .control-group input[type="range"]::-webkit-slider-thumb {
@@ -180,10 +146,6 @@ header p {
     background: var(--accent-color);
     cursor: pointer;
     box-shadow: 0 2px 6px rgba(0, 0, 0, 0.3);
-    /* Performance optimizations */
-    will-change: transform;
-    transform: translateZ(0);
-    -webkit-transform: translateZ(0);
 }
 
 .control-group input[type="range"]::-moz-range-thumb {
@@ -210,10 +172,6 @@ header p {
     justify-content: center;
     margin-bottom: 30px;
     flex-wrap: wrap;
-    /* Performance optimizations */
-    will-change: transform;
-    transform: translateZ(0);
-    -webkit-transform: translateZ(0);
 }
 
 .generate-btn,
@@ -232,10 +190,6 @@ header p {
     box-shadow: 0 4px 15px rgba(0, 0, 0, 0.2);
     position: relative;
     overflow: hidden;
-    /* Performance optimizations */
-    will-change: transform;
-    transform: translateZ(0);
-    -webkit-transform: translateZ(0);
 }
 
 .generate-btn {
@@ -256,16 +210,14 @@ header p {
 .generate-btn:hover,
 .save-btn:hover,
 .share-btn:hover {
-    transform: translateY(-3px) translateZ(0);
-    -webkit-transform: translateY(-3px) translateZ(0);
+    transform: translateY(-3px);
     box-shadow: 0 8px 25px rgba(0, 0, 0, 0.3);
 }
 
 .generate-btn:active,
 .save-btn:active,
 .share-btn:active {
-    transform: translateY(-1px) translateZ(0);
-    -webkit-transform: translateY(-1px) translateZ(0);
+    transform: translateY(-1px);
 }
 
 /* City Container */
@@ -274,10 +226,6 @@ header p {
     display: flex;
     justify-content: center;
     margin-bottom: 30px;
-    /* Performance optimizations */
-    will-change: transform;
-    transform: translateZ(0);
-    -webkit-transform: translateZ(0);
 }
 
 #cityCanvas {
@@ -287,13 +235,6 @@ header p {
     border: 2px solid var(--glass-border);
     max-width: 100%;
     height: auto;
-    /* Performance optimizations */
-    will-change: transform;
-    transform: translateZ(0);
-    -webkit-transform: translateZ(0);
-    /* Optimize canvas rendering */
-    image-rendering: -webkit-optimize-contrast;
-    image-rendering: crisp-edges;
 }
 
 .canvas-overlay {
@@ -310,10 +251,6 @@ header p {
     opacity: 0;
     visibility: hidden;
     transition: all 0.3s ease;
-    /* Performance optimizations */
-    will-change: opacity, visibility;
-    transform: translateZ(0);
-    -webkit-transform: translateZ(0);
 }
 
 .canvas-overlay.active {
@@ -327,19 +264,11 @@ header p {
     align-items: center;
     gap: 15px;
     color: var(--text-primary);
-    /* Performance optimizations */
-    will-change: transform;
-    transform: translateZ(0);
-    -webkit-transform: translateZ(0);
 }
 
 .loading-spinner i {
     font-size: 2rem;
     color: var(--accent-color);
-    /* Performance optimizations */
-    will-change: transform;
-    transform: translateZ(0);
-    -webkit-transform: translateZ(0);
 }
 
 /* Info Panels */
@@ -347,10 +276,6 @@ header p {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
     gap: 25px;
-    /* Performance optimizations */
-    will-change: transform;
-    transform: translateZ(0);
-    -webkit-transform: translateZ(0);
 }
 
 .info-panel {
@@ -359,10 +284,6 @@ header p {
     padding: 25px;
     border: 1px solid var(--glass-border);
     backdrop-filter: blur(10px);
-    /* Performance optimizations */
-    will-change: transform;
-    transform: translateZ(0);
-    -webkit-transform: translateZ(0);
 }
 
 .info-panel h3 {
@@ -382,10 +303,6 @@ header p {
     padding: 12px 0;
     border-bottom: 1px solid rgba(255, 255, 255, 0.1);
     transition: all 0.3s ease;
-    /* Performance optimizations */
-    will-change: transform, background-color;
-    transform: translateZ(0);
-    -webkit-transform: translateZ(0);
 }
 
 .stat-item:hover,
@@ -394,8 +311,6 @@ header p {
     border-radius: 8px;
     padding-left: 12px;
     padding-right: 12px;
-    transform: translateX(5px) translateZ(0);
-    -webkit-transform: translateX(5px) translateZ(0);
 }
 
 .stat-item i,
@@ -403,10 +318,6 @@ header p {
     width: 20px;
     text-align: center;
     color: var(--accent-color);
-    /* Performance optimizations */
-    will-change: transform;
-    transform: translateZ(0);
-    -webkit-transform: translateZ(0);
 }
 
 .stat-item span,
@@ -423,38 +334,13 @@ header p {
 
 /* Animations */
 @keyframes pulse {
-    0%, 100% { 
-        transform: scale(1) translateZ(0);
-        -webkit-transform: scale(1) translateZ(0);
-    }
-    50% { 
-        transform: scale(1.05) translateZ(0);
-        -webkit-transform: scale(1.05) translateZ(0);
-    }
+    0%, 100% { transform: scale(1); }
+    50% { transform: scale(1.05); }
 }
 
 @keyframes fadeIn {
-    from { 
-        opacity: 0; 
-        transform: translateY(20px) translateZ(0);
-        -webkit-transform: translateY(20px) translateZ(0);
-    }
-    to { 
-        opacity: 1; 
-        transform: translateY(0) translateZ(0);
-        -webkit-transform: translateY(0) translateZ(0);
-    }
-}
-
-@keyframes slideIn {
-    from { 
-        transform: translateX(-100%) translateZ(0);
-        -webkit-transform: translateX(-100%) translateZ(0);
-    }
-    to { 
-        transform: translateX(0) translateZ(0);
-        -webkit-transform: translateX(0) translateZ(0);
-    }
+    from { opacity: 0; transform: translateY(20px); }
+    to { opacity: 1; transform: translateY(0); }
 }
 
 .control-section,
@@ -555,34 +441,4 @@ header p {
 
 ::-webkit-scrollbar-thumb:hover {
     background: #3db8a9;
-}
-
-/* Additional Performance Optimizations */
-* {
-    /* Optimize paint and layout */
-    backface-visibility: hidden;
-    -webkit-backface-visibility: hidden;
-    perspective: 1000px;
-    -webkit-perspective: 1000px;
-}
-
-/* Reduce repaints for frequently changing elements */
-.control-group select,
-.control-group input[type="range"],
-.generate-btn,
-.save-btn,
-.share-btn {
-    backface-visibility: hidden;
-    -webkit-backface-visibility: hidden;
-}
-
-/* Optimize animations */
-@media (prefers-reduced-motion: reduce) {
-    *,
-    *::before,
-    *::after {
-        animation-duration: 0.01ms !important;
-        animation-iteration-count: 1 !important;
-        transition-duration: 0.01ms !important;
-    }
 }
