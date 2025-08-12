@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Procedural City Generator</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>🏙️ Procedural City Generator</h1>
+            <p>Generate unique cities using procedural algorithms</p>
+        </header>
+        
+        <div class="controls">
+            <div class="control-group">
+                <label for="citySize">City Size:</label>
+                <select id="citySize">
+                    <option value="small">Small</option>
+                    <option value="medium" selected>Medium</option>
+                    <option value="large">Large</option>
+                </select>
+            </div>
+            
+            <div class="control-group">
+                <label for="buildingStyle">Building Style:</label>
+                <select id="buildingStyle">
+                    <option value="modern">Modern</option>
+                    <option value="classical">Classical</option>
+                    <option value="futuristic">Futuristic</option>
+                    <option value="mixed">Mixed</option>
+                </select>
+            </div>
+            
+            <div class="control-group">
+                <label for="roadPattern">Road Pattern:</label>
+                <select id="roadPattern">
+                    <option value="grid">Grid</option>
+                    <option value="organic">Organic</option>
+                    <option value="radial">Radial</option>
+                    <option value="mixed">Mixed</option>
+                </select>
+            </div>
+            
+            <button id="generateBtn" class="generate-btn">Generate New City</button>
+        </div>
+        
+        <div class="city-container">
+            <canvas id="cityCanvas" width="800" height="600"></canvas>
+        </div>
+        
+        <div class="info-panel">
+            <h3>City Statistics</h3>
+            <div id="cityStats">
+                <p>Buildings: <span id="buildingCount">0</span></p>
+                <p>Roads: <span id="roadCount">0</span></p>
+                <p>Parks: <span id="parkCount">0</span></p>
+                <p>Population: <span id="population">0</span></p>
+            </div>
+        </div>
+    </div>
+    
+    <script src="city-generator.js"></script>
+</body>
+</html>
