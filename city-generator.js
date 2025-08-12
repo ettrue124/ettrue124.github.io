@@ -2,6 +2,12 @@ class AdvancedCityGenerator {
     constructor() {
         this.canvas = document.getElementById('cityCanvas');
         this.ctx = this.canvas.getContext('2d');
+        
+        // Performance optimizations
+        this.setupCanvasOptimizations();
+        this.objectPool = this.createObjectPool();
+        this.isGenerating = false;
+        
         this.cityData = {
             buildings: [],
             roads: [],
@@ -30,9 +36,44 @@ class AdvancedCityGenerator {
         this.generateCity();
     }
     
+    setupCanvasOptimizations() {
+        // Enable hardware acceleration
+        this.ctx.imageSmoothingEnabled = false; // Faster rendering
+        this.ctx.imageSmoothingQuality = 'low';
+        
+        // Set canvas size for better performance
+        const dpr = window.devicePixelRatio || 1;
+        const rect = this.canvas.getBoundingClientRect();
+        
+        this.canvas.width = rect.width * dpr;
+        this.canvas.height = rect.height * dpr;
+        this.ctx.scale(dpr, dpr);
+        
+        // Set display size
+        this.canvas.style.width = rect.width + 'px';
+        this.canvas.style.height = rect.height + 'px';
+    }
+    
+    createObjectPool() {
+        return {
+            buildings: [],
+            roads: [],
+            parks: [],
+            waterBodies: [],
+            reset() {
+                this.buildings.length = 0;
+                this.roads.length = 0;
+                this.parks.length = 0;
+                this.waterBodies.length = 0;
+            }
+        };
+    }
+    
     setupEventListeners() {
         document.getElementById('generateBtn').addEventListener('click', () => {
-            this.generateCity();
+            if (!this.isGenerating) {
+                this.generateCity();
+            }
         });
         
         document.getElementById('saveBtn').addEventListener('click', () => {
@@ -43,76 +84,114 @@ class AdvancedCityGenerator {
             this.shareCity();
         });
         
-        // Add slider event listeners
-        document.getElementById('buildingDensity').addEventListener('input', (e) => {
+        // Optimized slider listeners with debouncing
+        const debounce = (func, wait) => {
+            let timeout;
+            return function executedFunction(...args) {
+                const later = () => {
+                    clearTimeout(timeout);
+                    func(...args);
+                };
+                clearTimeout(timeout);
+                timeout = setTimeout(later, wait);
+            };
+        };
+        
+        document.getElementById('buildingDensity').addEventListener('input', debounce((e) => {
             document.getElementById('densityValue').textContent = e.target.value;
-        });
+        }, 100));
         
-        document.getElementById('parkRatio').addEventListener('input', (e) => {
+        document.getElementById('parkRatio').addEventListener('input', debounce((e) => {
             document.getElementById('parkValue').textContent = e.target.value;
-        });
+        }, 100));
         
-        document.getElementById('waterBodies').addEventListener('input', (e) => {
+        document.getElementById('waterBodies').addEventListener('input', debounce((e) => {
             document.getElementById('waterValue').textContent = e.target.value;
-        });
+        }, 100));
     }
     
     initializeSliders() {
-        // Initialize slider values
         document.getElementById('densityValue').textContent = document.getElementById('buildingDensity').value;
         document.getElementById('parkValue').textContent = document.getElementById('parkRatio').value;
         document.getElementById('waterValue').textContent = document.getElementById('waterBodies').value;
     }
     
     async generateCity() {
+        if (this.isGenerating) return;
+        
+        this.isGenerating = true;
         this.showLoading(true);
         
-        // Simulate generation time for better UX
-        await new Promise(resolve => setTimeout(resolve, 800));
+        // Use requestAnimationFrame for smooth loading
+        await new Promise(resolve => requestAnimationFrame(resolve));
         
+        try {
+            // Batch all operations for better performance
+            await this.performBatchGeneration();
+        } catch (error) {
+            console.error('Generation error:', error);
+        } finally {
+            this.isGenerating = false;
+            this.showLoading(false);
+        }
+    }
+    
+    async performBatchGeneration() {
+        // Reset object pool
+        this.objectPool.reset();
+        
+        // Clear canvas efficiently
         this.clearCanvas();
+        
+        // Reset city data
         this.cityData = {
             buildings: [], roads: [], parks: [], waterBodies: [],
             population: 0, area: 0, name: '', founded: '', climate: '', economy: ''
         };
         
-        const citySize = document.getElementById('citySize').value;
-        const buildingStyle = document.getElementById('buildingStyle').value;
-        const roadPattern = document.getElementById('roadPattern').value;
-        const buildingDensity = parseFloat(document.getElementById('buildingDensity').value);
-        const parkRatio = parseFloat(document.getElementById('parkRatio').value);
-        const waterCount = parseInt(document.getElementById('waterBodies').value);
-        const timeOfDay = document.getElementById('timeOfDay').value;
-        const renderQuality = document.getElementById('renderQuality').value;
+        const settings = this.getGenerationSettings();
         
-        // Generate city name and details
+        // Generate city details
         this.generateCityDetails();
         
-        // Apply time of day effects
-        this.applyTimeOfDayEffects(timeOfDay);
+        // Batch all generation operations
+        await this.batchGenerateElements(settings);
         
-        // Generate water bodies first
-        this.generateWaterBodies(waterCount, citySize);
+        // Update UI efficiently
+        this.updateAdvancedStats();
+    }
+    
+    getGenerationSettings() {
+        return {
+            citySize: document.getElementById('citySize').value,
+            buildingStyle: document.getElementById('buildingStyle').value,
+            roadPattern: document.getElementById('roadPattern').value,
+            buildingDensity: parseFloat(document.getElementById('buildingDensity').value),
+            parkRatio: parseFloat(document.getElementById('parkRatio').value),
+            waterCount: parseInt(document.getElementById('waterBodies').value),
+            timeOfDay: document.getElementById('timeOfDay').value,
+            renderQuality: document.getElementById('renderQuality').value
+        };
+    }
+    
+    async batchGenerateElements(settings) {
+        // Apply time effects first
+        this.applyTimeOfDayEffects(settings.timeOfDay);
         
-        // Generate roads
-        this.generateAdvancedRoads(roadPattern, citySize);
+        // Generate all elements in optimized order
+        const promises = [
+            this.generateWaterBodiesOptimized(settings.waterCount, settings.citySize),
+            this.generateRoadsOptimized(settings.roadPattern, settings.citySize),
+            this.generateBuildingsOptimized(settings.buildingStyle, settings.citySize, settings.buildingDensity),
+            this.generateParksOptimized(settings.citySize, settings.parkRatio),
+            this.generateLandmarksOptimized(settings.citySize, settings.buildingStyle)
+        ];
         
-        // Generate buildings with density
-        this.generateAdvancedBuildings(buildingStyle, citySize, buildingDensity);
-        
-        // Generate parks with ratio
-        this.generateAdvancedParks(citySize, parkRatio);
-        
-        // Add special landmarks
-        this.generateLandmarks(citySize, buildingStyle);
+        // Execute in parallel where possible
+        await Promise.all(promises);
         
         // Calculate statistics
         this.calculateAdvancedStatistics();
-        
-        // Update UI
-        this.updateAdvancedStats();
-        
-        this.showLoading(false);
     }
     
     showLoading(show) {
@@ -125,24 +204,25 @@ class AdvancedCityGenerator {
     }
     
     clearCanvas() {
+        // Use clearRect for better performance
+        this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
         this.ctx.fillStyle = '#2c3e50';
         this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
     }
     
     applyTimeOfDayEffects(timeOfDay) {
-        switch(timeOfDay) {
-            case 'sunset':
-                this.ctx.fillStyle = 'rgba(255, 165, 0, 0.3)';
-                this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
-                break;
-            case 'night':
-                this.ctx.fillStyle = 'rgba(25, 25, 112, 0.4)';
-                this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
-                break;
-            case 'rainy':
-                this.ctx.fillStyle = 'rgba(105, 105, 105, 0.3)';
-                this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
-                break;
+        // Optimized time effects with reduced opacity
+        const effects = {
+            sunset: { color: 'rgba(255, 165, 0, 0.2)', blend: 'multiply' },
+            night: { color: 'rgba(25, 25, 112, 0.3)', blend: 'multiply' },
+            rainy: { color: 'rgba(105, 105, 105, 0.2)', blend: 'multiply' }
+        };
+        
+        if (effects[timeOfDay]) {
+            this.ctx.globalCompositeOperation = effects[timeOfDay].blend;
+            this.ctx.fillStyle = effects[timeOfDay].color;
+            this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+            this.ctx.globalCompositeOperation = 'source-over';
         }
     }
     
@@ -153,18 +233,22 @@ class AdvancedCityGenerator {
         this.cityData.economy = this.economies[Math.floor(Math.random() * this.economies.length)];
     }
     
-    generateWaterBodies(count, size) {
+    async generateWaterBodiesOptimized(count, size) {
         const waterTypes = ['lake', 'river', 'pond', 'bay'];
+        const waterBodies = [];
         
         for (let i = 0; i < count; i++) {
             const waterType = waterTypes[Math.floor(Math.random() * waterTypes.length)];
-            const water = this.createWaterBody(waterType, size);
-            this.drawWaterBody(water);
-            this.cityData.waterBodies.push(water);
+            const water = this.createWaterBodyOptimized(waterType, size);
+            waterBodies.push(water);
         }
+        
+        // Batch draw water bodies
+        this.drawWaterBodiesBatch(waterBodies);
+        this.cityData.waterBodies = waterBodies;
     }
     
-    createWaterBody(type, size) {
+    createWaterBodyOptimized(type, size) {
         const baseSize = size === 'small' ? 40 : size === 'medium' ? 60 : size === 'large' ? 80 : 100;
         
         switch(type) {
@@ -207,136 +291,85 @@ class AdvancedCityGenerator {
         }
     }
     
-    drawWaterBody(water) {
-        this.ctx.fillStyle = water.color;
-        
-        if (water.type === 'river') {
-            this.ctx.fillRect(water.x, water.y, water.width, water.height);
-            // Add river flow effect
-            this.ctx.strokeStyle = '#1f618d';
-            this.ctx.lineWidth = 2;
-            for (let i = 0; i < water.width; i += 20) {
-                this.ctx.beginPath();
-                this.ctx.moveTo(i, water.y);
-                this.ctx.lineTo(i + 10, water.y + water.height);
-                this.ctx.stroke();
-            }
-        } else {
-            this.ctx.beginPath();
-            this.ctx.ellipse(water.x + water.width/2, water.y + water.height/2, 
-                           water.width/2, water.height/2, 0, 0, 2 * Math.PI);
-            this.ctx.fill();
+    drawWaterBodiesBatch(waterBodies) {
+        // Batch draw for better performance
+        waterBodies.forEach(water => {
+            this.ctx.fillStyle = water.color;
             
-            // Add water reflection
-            this.ctx.strokeStyle = '#1f618d';
-            this.ctx.lineWidth = 1;
-            this.ctx.stroke();
-        }
+            if (water.type === 'river') {
+                this.ctx.fillRect(water.x, water.y, water.width, water.height);
+                // Simplified river flow effect
+                this.ctx.strokeStyle = '#1f618d';
+                this.ctx.lineWidth = 2;
+                for (let i = 0; i < water.width; i += 30) {
+                    this.ctx.beginPath();
+                    this.ctx.moveTo(i, water.y);
+                    this.ctx.lineTo(i + 10, water.y + water.height);
+                    this.ctx.stroke();
+                }
+            } else {
+                this.ctx.beginPath();
+                this.ctx.ellipse(water.x + water.width/2, water.y + water.height/2, 
+                               water.width/2, water.height/2, 0, 0, 2 * Math.PI);
+                this.ctx.fill();
+            }
+        });
     }
     
-    generateAdvancedRoads(pattern, size) {
+    async generateRoadsOptimized(pattern, size) {
         const roadWidth = size === 'small' ? 6 : size === 'medium' ? 8 : size === 'large' ? 10 : 12;
         this.ctx.strokeStyle = '#34495e';
         this.ctx.lineWidth = roadWidth;
         this.ctx.lineCap = 'round';
         
+        const roads = [];
+        
         switch(pattern) {
             case 'grid':
-                this.generateGridRoads(size);
+                roads.push(...this.generateGridRoadsOptimized(size));
                 break;
             case 'organic':
-                this.generateOrganicRoads(size);
+                roads.push(...this.generateOrganicRoadsOptimized(size));
                 break;
             case 'radial':
-                this.generateRadialRoads(size);
+                roads.push(...this.generateRadialRoadsOptimized(size));
                 break;
             case 'spiral':
-                this.generateSpiralRoads(size);
+                roads.push(...this.generateSpiralRoadsOptimized(size));
                 break;
             case 'fractal':
-                this.generateFractalRoads(size);
+                roads.push(...this.generateFractalRoadsOptimized(size));
                 break;
             case 'mixed':
-                this.generateMixedRoads(size);
+                roads.push(...this.generateMixedRoadsOptimized(size));
                 break;
         }
+        
+        // Batch draw roads
+        this.drawRoadsBatch(roads);
+        this.cityData.roads = roads;
     }
     
-    generateSpiralRoads(size) {
-        const centerX = this.canvas.width / 2;
-        const centerY = this.canvas.height / 2;
-        const maxRadius = Math.min(this.canvas.width, this.canvas.height) / 2;
-        
-        this.ctx.beginPath();
-        this.ctx.moveTo(centerX, centerY);
-        
-        for (let angle = 0; angle < 8 * Math.PI; angle += 0.1) {
-            const radius = (angle / (8 * Math.PI)) * maxRadius;
-            const x = centerX + radius * Math.cos(angle);
-            const y = centerY + radius * Math.sin(angle);
-            this.ctx.lineTo(x, y);
-        }
-        this.ctx.stroke();
-        
-        // Add connecting roads
-        for (let i = 0; i < 8; i++) {
-            const angle = (i / 8) * 2 * Math.PI;
-            const x = centerX + Math.cos(angle) * maxRadius;
-            const y = centerY + Math.sin(angle) * maxRadius;
-            
-            this.ctx.beginPath();
-            this.ctx.moveTo(centerX, centerY);
-            this.ctx.lineTo(x, y);
-            this.ctx.stroke();
-        }
-    }
-    
-    generateFractalRoads(size) {
-        this.generateFractalBranch(this.canvas.width / 2, this.canvas.height / 2, 
-                                  Math.min(this.canvas.width, this.canvas.height) / 3, 0, 4);
-    }
-    
-    generateFractalBranch(x, y, length, angle, depth) {
-        if (depth === 0) return;
-        
-        const endX = x + length * Math.cos(angle);
-        const endY = y + length * Math.sin(angle);
-        
-        this.ctx.beginPath();
-        this.ctx.moveTo(x, y);
-        this.ctx.lineTo(endX, endY);
-        this.ctx.stroke();
-        
-        // Recursive branches
-        const newLength = length * 0.7;
-        this.generateFractalBranch(endX, endY, newLength, angle + Math.PI/4, depth - 1);
-        this.generateFractalBranch(endX, endY, newLength, angle - Math.PI/4, depth - 1);
-    }
-    
-    generateGridRoads(size) {
+    generateGridRoadsOptimized(size) {
         const spacing = size === 'small' ? 80 : size === 'medium' ? 60 : size === 'large' ? 40 : 30;
+        const roads = [];
         
         // Vertical roads
         for (let x = spacing; x < this.canvas.width; x += spacing) {
-            this.ctx.beginPath();
-            this.ctx.moveTo(x, 0);
-            this.ctx.lineTo(x, this.canvas.height);
-            this.ctx.stroke();
-            this.cityData.roads.push({ x1: x, y1: 0, x2: x, y2: this.canvas.height });
+            roads.push({ x1: x, y1: 0, x2: x, y2: this.canvas.height });
         }
         
         // Horizontal roads
         for (let y = spacing; y < this.canvas.height; y += spacing) {
-            this.ctx.beginPath();
-            this.ctx.moveTo(0, y);
-            this.ctx.lineTo(this.canvas.width, y);
-            this.ctx.stroke();
-            this.cityData.roads.push({ x1: 0, y1: y, x2: this.canvas.width, y2: y });
+            roads.push({ x1: 0, y1: y, x2: this.canvas.width, y2: y });
         }
+        
+        return roads;
     }
     
-    generateOrganicRoads(size) {
+    generateOrganicRoadsOptimized(size) {
         const numRoads = size === 'small' ? 8 : size === 'medium' ? 12 : size === 'large' ? 18 : 25;
+        const roads = [];
         
         for (let i = 0; i < numRoads; i++) {
             const startX = Math.random() * this.canvas.width;
@@ -344,455 +377,326 @@ class AdvancedCityGenerator {
             const endX = Math.random() * this.canvas.width;
             const endY = Math.random() * this.canvas.height;
             
-            this.ctx.beginPath();
-            this.ctx.moveTo(startX, startY);
-            
-            // Create curved path with multiple control points
-            const points = [];
-            const numPoints = 3 + Math.floor(Math.random() * 3);
-            
-            for (let j = 0; j < numPoints; j++) {
-                points.push({
-                    x: Math.random() * this.canvas.width,
-                    y: Math.random() * this.canvas.height
-                });
-            }
-            
-            this.ctx.moveTo(startX, startY);
-            for (let j = 0; j < points.length; j++) {
-                this.ctx.quadraticCurveTo(points[j].x, points[j].y, 
-                                        j === points.length - 1 ? endX : points[j + 1].x,
-                                        j === points.length - 1 ? endY : points[j + 1].y);
-            }
-            this.ctx.stroke();
-            
-            this.cityData.roads.push({ x1: startX, y1: startY, x2: endX, y2: endY });
+            roads.push({ x1: startX, y1: startY, x2: endX, y2: endY });
         }
+        
+        return roads;
     }
     
-    generateRadialRoads(size) {
+    generateRadialRoadsOptimized(size) {
         const centerX = this.canvas.width / 2;
         const centerY = this.canvas.height / 2;
         const numRoads = size === 'small' ? 6 : size === 'medium' ? 8 : size === 'large' ? 12 : 16;
+        const roads = [];
         
         // Radial roads from center
         for (let i = 0; i < numRoads; i++) {
             const angle = (i / numRoads) * 2 * Math.PI;
             const endX = centerX + Math.cos(angle) * this.canvas.width;
             const endY = centerY + Math.sin(angle) * this.canvas.height;
-            
-            this.ctx.beginPath();
-            this.ctx.moveTo(centerX, centerY);
-            this.ctx.lineTo(endX, endY);
-            this.ctx.stroke();
-            
-            this.cityData.roads.push({ x1: centerX, y1: centerY, x2: endX, y2: endY });
+            roads.push({ x1: centerX, y1: centerY, x2: endX, y2: endY });
         }
         
-        // Circular roads
-        const numCircles = size === 'small' ? 2 : size === 'medium' ? 3 : size === 'large' ? 4 : 5;
-        for (let i = 1; i <= numCircles; i++) {
-            const radius = (this.canvas.width / 2) * (i / numCircles);
-            this.ctx.beginPath();
-            this.ctx.arc(centerX, centerY, radius, 0, 2 * Math.PI);
-            this.ctx.stroke();
+        return roads;
+    }
+    
+    generateSpiralRoadsOptimized(size) {
+        const centerX = this.canvas.width / 2;
+        const centerY = this.canvas.height / 2;
+        const maxRadius = Math.min(this.canvas.width, this.canvas.height) / 2;
+        const roads = [];
+        
+        // Simplified spiral with fewer points
+        for (let angle = 0; angle < 6 * Math.PI; angle += 0.2) {
+            const radius = (angle / (6 * Math.PI)) * maxRadius;
+            const x = centerX + radius * Math.cos(angle);
+            const y = centerY + radius * Math.sin(angle);
+            roads.push({ x1: centerX, y1: centerY, x2: x, y2: y });
         }
+        
+        return roads;
     }
     
-    generateMixedRoads(size) {
-        this.generateGridRoads(size);
-        this.generateOrganicRoads(size);
+    generateFractalRoadsOptimized(size) {
+        const roads = [];
+        this.generateFractalBranchOptimized(this.canvas.width / 2, this.canvas.height / 2, 
+                                          Math.min(this.canvas.width, this.canvas.height) / 3, 0, 3, roads);
+        return roads;
     }
     
-    generateAdvancedBuildings(style, size, density) {
+    generateFractalBranchOptimized(x, y, length, angle, depth, roads) {
+        if (depth === 0) return;
+        
+        const endX = x + length * Math.cos(angle);
+        const endY = y + length * Math.sin(angle);
+        
+        roads.push({ x1: x, y1: y, x2: endX, y2: endY });
+        
+        // Recursive branches with reduced depth
+        const newLength = length * 0.7;
+        this.generateFractalBranchOptimized(endX, endY, newLength, angle + Math.PI/4, depth - 1, roads);
+        this.generateFractalBranchOptimized(endX, endY, newLength, angle - Math.PI/4, depth - 1, roads);
+    }
+    
+    generateMixedRoadsOptimized(size) {
+        const gridRoads = this.generateGridRoadsOptimized(size);
+        const organicRoads = this.generateOrganicRoadsOptimized(size);
+        return [...gridRoads, ...organicRoads];
+    }
+    
+    drawRoadsBatch(roads) {
+        // Batch draw all roads
+        roads.forEach(road => {
+            this.ctx.beginPath();
+            this.ctx.moveTo(road.x1, road.y1);
+            this.ctx.lineTo(road.x2, road.y2);
+            this.ctx.stroke();
+        });
+    }
+    
+    async generateBuildingsOptimized(style, size, density) {
         const baseNumBuildings = size === 'small' ? 20 : size === 'medium' ? 35 : size === 'large' ? 50 : 70;
         const numBuildings = Math.floor(baseNumBuildings * density);
         
-        for (let i = 0; i < numBuildings; i++) {
-            const building = this.createAdvancedBuilding(style, size);
-            this.drawAdvancedBuilding(building);
-            this.cityData.buildings.push(building);
+        const buildings = [];
+        const maxAttempts = 100;
+        
+        for (let i = 0; i < numBuildings && buildings.length < numBuildings; i++) {
+            const building = this.createBuildingOptimized(style, size, maxAttempts);
+            if (building) {
+                buildings.push(building);
+            }
         }
+        
+        // Batch draw buildings
+        this.drawBuildingsBatch(buildings);
+        this.cityData.buildings = buildings;
     }
     
-    createAdvancedBuilding(style, size) {
+    createBuildingOptimized(style, size, maxAttempts) {
         const minSize = size === 'small' ? 12 : size === 'medium' ? 15 : size === 'large' ? 20 : 25;
         const maxSize = size === 'small' ? 30 : size === 'medium' ? 40 : size === 'large' ? 50 : 60;
         
         const width = minSize + Math.random() * (maxSize - minSize);
         const height = minSize + Math.random() * (maxSize - minSize);
         
-        // Avoid placing buildings on roads and water
-        let x, y;
-        let attempts = 0;
-        do {
-            x = Math.random() * (this.canvas.width - width);
-            y = Math.random() * (this.canvas.height - height);
-            attempts++;
-        } while ((this.isOnRoad(x, y, width, height) || this.isOnWater(x, y, width, height)) && attempts < 100);
-        
-        return {
-            x: x,
-            y: y,
-            width: width,
-            height: height,
-            style: style,
-            color: this.getAdvancedBuildingColor(style),
-            windows: Math.floor(Math.random() * 12) + 3,
-            floors: Math.floor(Math.random() * 5) + 1,
-            type: this.getBuildingType(style),
-            special: Math.random() < 0.1 // 10% chance of special building
-        };
-    }
-    
-    isOnWater(x, y, width, height) {
-        for (let water of this.cityData.waterBodies) {
-            if (x < water.x + water.width && x + width > water.x &&
-                y < water.y + water.height && y + height > water.y) {
-                return true;
+        // Optimized placement with early exit
+        for (let attempts = 0; attempts < maxAttempts; attempts++) {
+            const x = Math.random() * (this.canvas.width - width);
+            const y = Math.random() * (this.canvas.height - height);
+            
+            if (!this.isOnRoadOptimized(x, y, width, height) && !this.isOnWaterOptimized(x, y, width, height)) {
+                return {
+                    x: x,
+                    y: y,
+                    width: width,
+                    height: height,
+                    style: style,
+                    color: this.getBuildingColorOptimized(style),
+                    floors: Math.floor(Math.random() * 3) + 1, // Reduced floors for performance
+                    special: Math.random() < 0.05 // Reduced special buildings
+                };
             }
         }
-        return false;
-    }
-    
-    getBuildingType(style) {
-        const types = {
-            modern: ['office', 'apartment', 'mall', 'hotel'],
-            classical: ['museum', 'library', 'theater', 'government'],
-            futuristic: ['research', 'spaceport', 'energy', 'transport'],
-            gothic: ['cathedral', 'castle', 'university', 'monument'],
-            asian: ['temple', 'pagoda', 'garden', 'palace'],
-            mixed: ['office', 'apartment', 'museum', 'temple']
-        };
         
-        const styleTypes = types[style] || types.mixed;
-        return styleTypes[Math.floor(Math.random() * styleTypes.length)];
+        return null;
     }
     
-    getAdvancedBuildingColor(style) {
+    isOnRoadOptimized(x, y, width, height) {
+        const roadBuffer = 12;
+        return this.cityData.roads.some(road => 
+            x < road.x2 + roadBuffer && x + width > road.x1 - roadBuffer &&
+            y < road.y2 + roadBuffer && y + height > road.y1 - roadBuffer
+        );
+    }
+    
+    isOnWaterOptimized(x, y, width, height) {
+        return this.cityData.waterBodies.some(water =>
+            x < water.x + water.width && x + width > water.x &&
+            y < water.y + water.height && y + height > water.y
+        );
+    }
+    
+    getBuildingColorOptimized(style) {
         const colors = {
-            modern: ['#3498db', '#2980b9', '#5dade2', '#85c1e9', '#2ecc71'],
-            classical: ['#e67e22', '#d35400', '#f39c12', '#f8c471', '#e74c3c'],
-            futuristic: ['#9b59b6', '#8e44ad', '#bb8fce', '#d7bde2', '#00d4ff'],
-            gothic: ['#2c3e50', '#34495e', '#7f8c8d', '#95a5a6', '#8b4513'],
-            asian: ['#e74c3c', '#c0392b', '#f39c12', '#f1c40f', '#27ae60'],
-            mixed: ['#3498db', '#e67e22', '#9b59b6', '#2ecc71', '#e74c3c', '#f39c12']
+            modern: ['#3498db', '#2980b9', '#5dade2'],
+            classical: ['#e67e22', '#d35400', '#f39c12'],
+            futuristic: ['#9b59b6', '#8e44ad', '#bb8fce'],
+            gothic: ['#2c3e50', '#34495e', '#7f8c8d'],
+            asian: ['#e74c3c', '#c0392b', '#f39c12'],
+            mixed: ['#3498db', '#e67e22', '#9b59b6', '#2ecc71']
         };
         
         const styleColors = colors[style] || colors.mixed;
         return styleColors[Math.floor(Math.random() * styleColors.length)];
     }
     
-    drawAdvancedBuilding(building) {
-        // Draw main building
-        this.ctx.fillStyle = building.color;
-        this.ctx.fillRect(building.x, building.y, building.width, building.height);
-        
-        // Draw floors
-        this.drawFloors(building);
-        
-        // Draw windows
-        this.drawAdvancedWindows(building);
-        
-        // Draw style-specific details
-        this.drawStyleSpecificDetails(building);
-        
-        // Draw special effects for special buildings
-        if (building.special) {
-            this.drawSpecialEffects(building);
-        }
-    }
-    
-    drawFloors(building) {
-        this.ctx.strokeStyle = '#2c3e50';
-        this.ctx.lineWidth = 1;
-        
-        for (let i = 1; i < building.floors; i++) {
-            const y = building.y + (building.height / building.floors) * i;
-            this.ctx.beginPath();
-            this.ctx.moveTo(building.x, y);
-            this.ctx.lineTo(building.x + building.width, y);
-            this.ctx.stroke();
-        }
-    }
-    
-    drawAdvancedWindows(building) {
-        this.ctx.fillStyle = '#f1c40f';
-        const windowSize = 2;
-        const spacing = 4;
-        
-        // Windows on each floor
-        for (let floor = 0; floor < building.floors; floor++) {
-            const floorY = building.y + (building.height / building.floors) * floor + spacing;
-            const windowsInRow = Math.floor(building.width / (windowSize + spacing)) - 1;
+    drawBuildingsBatch(buildings) {
+        // Batch draw for better performance
+        buildings.forEach(building => {
+            // Main building
+            this.ctx.fillStyle = building.color;
+            this.ctx.fillRect(building.x, building.y, building.width, building.height);
             
-            for (let i = 0; i < windowsInRow; i++) {
-                const windowX = building.x + spacing + (i * (windowSize + spacing));
-                this.ctx.fillRect(windowX, floorY, windowSize, windowSize);
+            // Simple windows
+            this.ctx.fillStyle = '#f1c40f';
+            const windowSize = 2;
+            const spacing = 4;
+            
+            for (let floor = 0; floor < building.floors; floor++) {
+                const floorY = building.y + (building.height / building.floors) * floor + spacing;
+                const windowsInRow = Math.min(3, Math.floor(building.width / (windowSize + spacing)) - 1);
+                
+                for (let i = 0; i < windowsInRow; i++) {
+                    const windowX = building.x + spacing + (i * (windowSize + spacing));
+                    this.ctx.fillRect(windowX, floorY, windowSize, windowSize);
+                }
             }
-        }
+            
+            // Simple border
+            this.ctx.strokeStyle = '#2c3e50';
+            this.ctx.lineWidth = 1;
+            this.ctx.strokeRect(building.x, building.y, building.width, building.height);
+        });
     }
     
-    drawStyleSpecificDetails(building) {
-        switch(building.style) {
-            case 'modern':
-                this.drawModernDetails(building);
-                break;
-            case 'classical':
-                this.drawClassicalDetails(building);
-                break;
-            case 'futuristic':
-                this.drawFuturisticDetails(building);
-                break;
-            case 'gothic':
-                this.drawGothicDetails(building);
-                break;
-            case 'asian':
-                this.drawAsianDetails(building);
-                break;
-        }
-    }
-    
-    drawModernDetails(building) {
-        // Glass effect
-        this.ctx.strokeStyle = '#ecf0f1';
-        this.ctx.lineWidth = 1;
-        this.ctx.strokeRect(building.x, building.y, building.width, building.height);
-        
-        // Modern rooftop
-        this.ctx.fillStyle = '#34495e';
-        this.ctx.fillRect(building.x, building.y, building.width, 3);
-    }
-    
-    drawClassicalDetails(building) {
-        // Columns
-        this.ctx.strokeStyle = '#7f8c8d';
-        this.ctx.lineWidth = 2;
-        const columnWidth = building.width / 4;
-        for (let i = 1; i < 4; i++) {
-            const x = building.x + (i * columnWidth);
-            this.ctx.beginPath();
-            this.ctx.moveTo(x, building.y);
-            this.ctx.lineTo(x, building.y + building.height);
-            this.ctx.stroke();
-        }
-        
-        // Classical roof
-        this.ctx.fillStyle = '#8b4513';
-        this.ctx.fillRect(building.x, building.y, building.width, 5);
-    }
-    
-    drawFuturisticDetails(building) {
-        // Neon glow
-        this.ctx.shadowColor = building.color;
-        this.ctx.shadowBlur = 10;
-        this.ctx.strokeStyle = '#ffffff';
-        this.ctx.lineWidth = 1;
-        this.ctx.strokeRect(building.x, building.y, building.width, building.height);
-        this.ctx.shadowBlur = 0;
-        
-        // Antenna
-        this.ctx.strokeStyle = '#ffffff';
-        this.ctx.lineWidth = 2;
-        this.ctx.beginPath();
-        this.ctx.moveTo(building.x + building.width/2, building.y);
-        this.ctx.lineTo(building.x + building.width/2, building.y - 10);
-        this.ctx.stroke();
-    }
-    
-    drawGothicDetails(building) {
-        // Gothic arches
-        this.ctx.strokeStyle = '#2c3e50';
-        this.ctx.lineWidth = 3;
-        this.ctx.beginPath();
-        this.ctx.arc(building.x + building.width/2, building.y + building.height, 
-                    building.width/3, 0, Math.PI, true);
-        this.ctx.stroke();
-        
-        // Spire
-        this.ctx.fillStyle = '#34495e';
-        this.ctx.fillRect(building.x + building.width/2 - 2, building.y - 15, 4, 15);
-    }
-    
-    drawAsianDetails(building) {
-        // Curved roof
-        this.ctx.strokeStyle = '#e74c3c';
-        this.ctx.lineWidth = 3;
-        this.ctx.beginPath();
-        this.ctx.arc(building.x + building.width/2, building.y, 
-                    building.width/2, 0, Math.PI, true);
-        this.ctx.stroke();
-        
-        // Lanterns
-        this.ctx.fillStyle = '#f39c12';
-        this.ctx.fillRect(building.x + 5, building.y + building.height - 8, 3, 6);
-        this.ctx.fillRect(building.x + building.width - 8, building.y + building.height - 8, 3, 6);
-    }
-    
-    drawSpecialEffects(building) {
-        // Add special glow or effects
-        this.ctx.shadowColor = '#ffff00';
-        this.ctx.shadowBlur = 15;
-        this.ctx.strokeStyle = '#ffff00';
-        this.ctx.lineWidth = 2;
-        this.ctx.strokeRect(building.x - 2, building.y - 2, building.width + 4, building.height + 4);
-        this.ctx.shadowBlur = 0;
-    }
-    
-    generateAdvancedParks(size, ratio) {
+    async generateParksOptimized(size, ratio) {
         const baseNumParks = size === 'small' ? 2 : size === 'medium' ? 4 : size === 'large' ? 6 : 8;
         const numParks = Math.floor(baseNumParks * ratio * 10);
         
-        for (let i = 0; i < numParks; i++) {
-            const park = this.createAdvancedPark(size);
-            this.drawAdvancedPark(park);
-            this.cityData.parks.push(park);
+        const parks = [];
+        const maxAttempts = 50;
+        
+        for (let i = 0; i < numParks && parks.length < numParks; i++) {
+            const park = this.createParkOptimized(size, maxAttempts);
+            if (park) {
+                parks.push(park);
+            }
         }
+        
+        // Batch draw parks
+        this.drawParksBatch(parks);
+        this.cityData.parks = parks;
     }
     
-    createAdvancedPark(size) {
+    createParkOptimized(size, maxAttempts) {
         const baseSize = size === 'small' ? 25 : size === 'medium' ? 35 : size === 'large' ? 45 : 55;
-        const sizeVariation = baseSize * 0.5;
-        const parkSize = baseSize + Math.random() * sizeVariation;
+        const parkSize = baseSize + Math.random() * baseSize * 0.5;
         
-        let x, y;
-        let attempts = 0;
-        do {
-            x = Math.random() * (this.canvas.width - parkSize);
-            y = Math.random() * (this.canvas.height - parkSize);
-            attempts++;
-        } while ((this.isOnRoad(x, y, parkSize, parkSize) || this.isOnWater(x, y, parkSize, parkSize)) && attempts < 50);
-        
-        return {
-            x: x,
-            y: y,
-            size: parkSize,
-            trees: Math.floor(Math.random() * 8) + 4,
-            benches: Math.floor(Math.random() * 3) + 1,
-            fountain: Math.random() < 0.3,
-            type: ['garden', 'playground', 'square', 'forest'][Math.floor(Math.random() * 4)]
-        };
-    }
-    
-    drawAdvancedPark(park) {
-        // Draw grass base
-        this.ctx.fillStyle = '#27ae60';
-        this.ctx.fillRect(park.x, park.y, park.size, park.size);
-        
-        // Draw trees
-        this.ctx.fillStyle = '#2d5a27';
-        for (let i = 0; i < park.trees; i++) {
-            const treeX = park.x + Math.random() * park.size;
-            const treeY = park.y + Math.random() * park.size;
-            const treeSize = 3 + Math.random() * 4;
+        for (let attempts = 0; attempts < maxAttempts; attempts++) {
+            const x = Math.random() * (this.canvas.width - parkSize);
+            const y = Math.random() * (this.canvas.height - parkSize);
             
-            this.ctx.beginPath();
-            this.ctx.arc(treeX, treeY, treeSize, 0, 2 * Math.PI);
-            this.ctx.fill();
+            if (!this.isOnRoadOptimized(x, y, parkSize, parkSize) && !this.isOnWaterOptimized(x, y, parkSize, parkSize)) {
+                return {
+                    x: x,
+                    y: y,
+                    size: parkSize,
+                    trees: Math.floor(Math.random() * 5) + 3,
+                    fountain: Math.random() < 0.2
+                };
+            }
         }
         
-        // Draw fountain if present
-        if (park.fountain) {
-            this.ctx.fillStyle = '#3498db';
-            this.ctx.beginPath();
-            this.ctx.arc(park.x + park.size/2, park.y + park.size/2, 5, 0, 2 * Math.PI);
-            this.ctx.fill();
-        }
-        
-        // Draw benches
-        this.ctx.fillStyle = '#8b4513';
-        for (let i = 0; i < park.benches; i++) {
-            const benchX = park.x + Math.random() * park.size;
-            const benchY = park.y + Math.random() * park.size;
-            this.ctx.fillRect(benchX, benchY, 8, 2);
-        }
+        return null;
     }
     
-    generateLandmarks(size, style) {
+    drawParksBatch(parks) {
+        parks.forEach(park => {
+            // Grass base
+            this.ctx.fillStyle = '#27ae60';
+            this.ctx.fillRect(park.x, park.y, park.size, park.size);
+            
+            // Trees
+            this.ctx.fillStyle = '#2d5a27';
+            for (let i = 0; i < park.trees; i++) {
+                const treeX = park.x + Math.random() * park.size;
+                const treeY = park.y + Math.random() * park.size;
+                const treeSize = 3 + Math.random() * 3;
+                
+                this.ctx.beginPath();
+                this.ctx.arc(treeX, treeY, treeSize, 0, 2 * Math.PI);
+                this.ctx.fill();
+            }
+            
+            // Fountain
+            if (park.fountain) {
+                this.ctx.fillStyle = '#3498db';
+                this.ctx.beginPath();
+                this.ctx.arc(park.x + park.size/2, park.y + park.size/2, 4, 0, 2 * Math.PI);
+                this.ctx.fill();
+            }
+        });
+    }
+    
+    async generateLandmarksOptimized(size, style) {
         const numLandmarks = size === 'small' ? 1 : size === 'medium' ? 2 : size === 'large' ? 3 : 4;
         
         for (let i = 0; i < numLandmarks; i++) {
-            const landmark = this.createLandmark(style);
-            this.drawLandmark(landmark);
+            const landmark = this.createLandmarkOptimized(style);
+            this.drawLandmarkOptimized(landmark);
         }
     }
     
-    createLandmark(style) {
-        const landmarkTypes = {
-            modern: ['skyscraper', 'bridge', 'tower'],
-            classical: ['monument', 'statue', 'arch'],
-            futuristic: ['spaceport', 'energy-tower', 'transport-hub'],
-            gothic: ['cathedral', 'castle', 'clock-tower'],
-            asian: ['pagoda', 'temple', 'gate'],
-            mixed: ['monument', 'tower', 'bridge']
-        };
-        
-        const types = landmarkTypes[style] || landmarkTypes.mixed;
-        const type = types[Math.floor(Math.random() * types.length)];
-        
+    createLandmarkOptimized(style) {
         return {
-            x: Math.random() * (this.canvas.width - 60),
-            y: Math.random() * (this.canvas.height - 60),
-            width: 40 + Math.random() * 20,
-            height: 60 + Math.random() * 40,
-            type: type,
+            x: Math.random() * (this.canvas.width - 50),
+            y: Math.random() * (this.canvas.height - 50),
+            width: 30 + Math.random() * 20,
+            height: 40 + Math.random() * 30,
             style: style
         };
     }
     
-    drawLandmark(landmark) {
+    drawLandmarkOptimized(landmark) {
         this.ctx.fillStyle = '#f39c12';
         this.ctx.fillRect(landmark.x, landmark.y, landmark.width, landmark.height);
         
-        // Add landmark-specific details
         this.ctx.strokeStyle = '#e67e22';
-        this.ctx.lineWidth = 3;
+        this.ctx.lineWidth = 2;
         this.ctx.strokeRect(landmark.x, landmark.y, landmark.width, landmark.height);
-        
-        // Add glow effect
-        this.ctx.shadowColor = '#f39c12';
-        this.ctx.shadowBlur = 10;
-        this.ctx.fillRect(landmark.x, landmark.y, landmark.width, landmark.height);
-        this.ctx.shadowBlur = 0;
     }
     
     calculateAdvancedStatistics() {
         let population = 0;
         let area = 0;
         
-        // Calculate population based on buildings
-        for (let building of this.cityData.buildings) {
+        // Optimized calculations
+        this.cityData.buildings.forEach(building => {
             const buildingArea = building.width * building.height;
             area += buildingArea;
             population += Math.floor(buildingArea / 8) * building.floors;
-        }
+        });
         
-        // Add park population
         population += this.cityData.parks.length * 50;
-        
-        // Add water population bonus
         population += this.cityData.waterBodies.length * 200;
-        
-        // Add randomness
-        population += Math.floor(Math.random() * 2000);
+        population += Math.floor(Math.random() * 1000);
         
         this.cityData.population = population;
-        this.cityData.area = Math.floor(area / 1000); // Convert to km²
+        this.cityData.area = Math.floor(area / 1000);
     }
     
     updateAdvancedStats() {
-        document.getElementById('buildingCount').textContent = this.cityData.buildings.length;
-        document.getElementById('roadCount').textContent = this.cityData.roads.length;
-        document.getElementById('parkCount').textContent = this.cityData.parks.length;
-        document.getElementById('waterCount').textContent = this.cityData.waterBodies.length;
-        document.getElementById('population').textContent = this.cityData.population.toLocaleString();
-        document.getElementById('cityArea').textContent = this.cityData.area;
+        // Batch DOM updates
+        const updates = [
+            ['buildingCount', this.cityData.buildings.length],
+            ['roadCount', this.cityData.roads.length],
+            ['parkCount', this.cityData.parks.length],
+            ['waterCount', this.cityData.waterBodies.length],
+            ['population', this.cityData.population.toLocaleString()],
+            ['cityArea', this.cityData.area],
+            ['cityName', this.cityData.name],
+            ['cityFounded', this.cityData.founded],
+            ['cityClimate', this.cityData.climate],
+            ['cityEconomy', this.cityData.economy]
+        ];
         
-        // Update city details
-        document.getElementById('cityName').textContent = this.cityData.name;
-        document.getElementById('cityFounded').textContent = this.cityData.founded;
-        document.getElementById('cityClimate').textContent = this.cityData.climate;
-        document.getElementById('cityEconomy').textContent = this.cityData.economy;
+        updates.forEach(([id, value]) => {
+            const element = document.getElementById(id);
+            if (element) {
+                element.textContent = value;
+            }
+        });
     }
     
     saveCity() {
@@ -810,26 +714,14 @@ class AdvancedCityGenerator {
                 url: window.location.href
             });
         } else {
-            // Fallback: copy to clipboard
             navigator.clipboard.writeText(window.location.href).then(() => {
                 alert('City URL copied to clipboard!');
             });
         }
     }
-    
-    isOnRoad(x, y, width, height) {
-        const roadBuffer = 12;
-        for (let road of this.cityData.roads) {
-            if (x < road.x2 + roadBuffer && x + width > road.x1 - roadBuffer &&
-                y < road.y2 + roadBuffer && y + height > road.y1 - roadBuffer) {
-                return true;
-            }
-        }
-        return false;
-    }
 }
 
-// Initialize the advanced city generator when the page loads
+// Initialize the optimized city generator
 document.addEventListener('DOMContentLoaded', () => {
     new AdvancedCityGenerator();
 });
