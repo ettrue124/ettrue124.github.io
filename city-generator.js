@@ -97,8 +97,8 @@ class CityGenerator {
         
         this.generateCityDetails();
         this.generateWaterBodies(settings.waterCount, settings.citySize);
-        this.generateRealisticRoadNetwork(settings.roadPattern, settings.citySize);
-        this.generateBuildings(settings.buildingStyle, settings.citySize, settings.buildingDensity);
+        this.generateProfessionalRoadNetwork(settings.roadPattern, settings.citySize);
+        this.generatePoissonDiscBuildings(settings.buildingStyle, settings.citySize, settings.buildingDensity);
         this.generateParks(settings.citySize, settings.parkRatio);
         this.generateLandmarks(settings.citySize, settings.buildingStyle);
         
@@ -129,6 +129,7 @@ class CityGenerator {
     }
     
     clearCanvas() {
+        // Clear the entire canvas with background color
         this.ctx.fillStyle = '#2c3e50';
         this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
     }
@@ -186,10 +187,16 @@ class CityGenerator {
         }
     }
     
-    generateRealisticRoadNetwork(pattern, size) {
+    generateProfessionalRoadNetwork(pattern, size) {
+        // Set up canvas clipping to keep roads inside bounds
+        this.ctx.save();
+        this.ctx.beginPath();
+        this.ctx.rect(0, 0, this.canvas.width, this.canvas.height);
+        this.ctx.clip();
+        
         switch(pattern) {
             case 'grid':
-                this.generateRealisticGrid(size);
+                this.generateGridRoadNetwork(size);
                 break;
             case 'organic':
                 this.generateOrganicRoadNetwork(size);
@@ -207,199 +214,478 @@ class CityGenerator {
                 this.generateMixedRoadNetwork(size);
                 break;
         }
+        
+        this.ctx.restore();
     }
     
-    generateRealisticGrid(size) {
-        // Generate highways first (major arteries)
-        this.generateHighways(size);
+    generateGridRoadNetwork(size) {
+        // Generate major highways using Delaunay triangulation
+        this.generateHighwayNetwork(size);
         
-        // Generate arterial roads
-        this.generateArterialRoads(size);
+        // Generate arterial roads using MST
+        this.generateArterialNetwork(size);
         
-        // Generate collector roads
-        this.generateCollectorRoads(size);
+        // Generate collector roads using K-nearest neighbors
+        this.generateCollectorNetwork(size);
         
         // Generate local streets
-        this.generateLocalStreets(size);
+        this.generateLocalStreetNetwork(size);
         
         // Add interchanges at major intersections
         this.generateInterchanges();
     }
     
-    generateHighways(size) {
-        const spacing = size === 'small' ? 120 : size === 'medium' ? 100 : 80;
+    generateHighwayNetwork(size) {
+        const numHighways = size === 'small' ? 3 : size === 'medium' ? 4 : 5;
+        const roadType = this.roadTypes.highway;
+        
+        // Generate highway nodes using strategic placement
+        const highwayNodes = this.generateHighwayNodes(numHighways);
+        
+        // Create Delaunay triangulation for highways
+        const triangulation = this.createDelaunayTriangulation(highwayNodes);
+        
+        // Draw highways using triangulation edges
+        this.drawTriangulationRoads(triangulation, roadType);
+    }
+    
+    generateHighwayNodes(numHighways) {
+        const nodes = [];
+        
+        // Add edge nodes for major highways
+        nodes.push({x: 0, y: this.canvas.height / 2});
+        nodes.push({x: this.canvas.width, y: this.canvas.height / 2});
+        nodes.push({x: this.canvas.width / 2, y: 0});
+        nodes.push({x: this.canvas.width / 2, y: this.canvas.height});
+        
+        // Add internal connection nodes
+        for (let i = 0; i < numHighways - 2; i++) {
+            nodes.push({
+                x: this.canvas.width * 0.2 + Math.random() * this.canvas.width * 0.6,
+                y: this.canvas.height * 0.2 + Math.random() * this.canvas.height * 0.6
+            });
+        }
+        
+        return nodes;
+    }
+    
+    createDelaunayTriangulation(points) {
+        // Simple Delaunay triangulation implementation
+        const triangles = [];
+        
+        // Create super triangle that contains all points
+        const minX = Math.min(...points.map(p => p.x)) - 100;
+        const minY = Math.min(...points.map(p => p.y)) - 100;
+        const maxX = Math.max(...points.map(p => p.x)) + 100;
+        const maxY = Math.max(...points.map(p => p.y)) + 100;
+        
+        const superTriangle = [
+            {x: minX, y: minY},
+            {x: maxX, y: minY},
+            {x: (minX + maxX) / 2, y: maxY}
+        ];
+        
+        triangles.push(superTriangle);
+        
+        // Add points one by one
+        for (const point of points) {
+            const edges = [];
+            
+            // Find triangles that contain the point
+            for (let i = triangles.length - 1; i >= 0; i--) {
+                const triangle = triangles[i];
+                if (this.pointInTriangle(point, triangle)) {
+                    // Remove triangle and add its edges
+                    triangles.splice(i, 1);
+                    edges.push([triangle[0], triangle[1]]);
+                    edges.push([triangle[1], triangle[2]]);
+                    edges.push([triangle[2], triangle[0]]);
+                }
+            }
+            
+            // Remove duplicate edges
+            const uniqueEdges = this.removeDuplicateEdges(edges);
+            
+            // Create new triangles with the point
+            for (const edge of uniqueEdges) {
+                triangles.push([edge[0], edge[1], point]);
+            }
+        }
+        
+        // Remove triangles that contain super triangle vertices
+        for (let i = triangles.length - 1; i >= 0; i--) {
+            const triangle = triangles[i];
+            if (this.containsSuperTriangleVertex(triangle, superTriangle)) {
+                triangles.splice(i, 1);
+            }
+        }
+        
+        return triangles;
+    }
+    
+    pointInTriangle(point, triangle) {
+        const [a, b, c] = triangle;
+        const v0x = c.x - a.x;
+        const v0y = c.y - a.y;
+        const v1x = b.x - a.x;
+        const v1y = b.y - a.y;
+        const v2x = point.x - a.x;
+        const v2y = point.y - a.y;
+        
+        const dot00 = v0x * v0x + v0y * v0y;
+        const dot01 = v0x * v1x + v0y * v1y;
+        const dot02 = v0x * v2x + v0y * v2y;
+        const dot11 = v1x * v1x + v1y * v1y;
+        const dot12 = v1x * v2x + v1y * v2y;
+        
+        const invDenom = 1 / (dot00 * dot11 - dot01 * dot01);
+        const u = (dot11 * dot02 - dot01 * dot12) * invDenom;
+        const v = (dot00 * dot12 - dot01 * dot02) * invDenom;
+        
+        return (u >= 0) && (v >= 0) && (u + v < 1);
+    }
+    
+    removeDuplicateEdges(edges) {
+        const uniqueEdges = [];
+        for (const edge of edges) {
+            let isDuplicate = false;
+            for (const uniqueEdge of uniqueEdges) {
+                if ((edge[0] === uniqueEdge[0] && edge[1] === uniqueEdge[1]) ||
+                    (edge[0] === uniqueEdge[1] && edge[1] === uniqueEdge[0])) {
+                    isDuplicate = true;
+                    break;
+                }
+            }
+            if (!isDuplicate) {
+                uniqueEdges.push(edge);
+            }
+        }
+        return uniqueEdges;
+    }
+    
+    containsSuperTriangleVertex(triangle, superTriangle) {
+        for (const vertex of triangle) {
+            for (const superVertex of superTriangle) {
+                if (vertex === superVertex) return true;
+            }
+        }
+        return false;
+    }
+    
+    drawTriangulationRoads(triangulation, roadType) {
+        this.ctx.strokeStyle = roadType.color;
+        this.ctx.lineWidth = roadType.width;
+        this.ctx.lineCap = 'round';
+        
+        for (const triangle of triangulation) {
+            // Draw edges of triangle as roads
+            for (let i = 0; i < 3; i++) {
+                const start = triangle[i];
+                const end = triangle[(i + 1) % 3];
+                
+                this.ctx.beginPath();
+                this.ctx.moveTo(start.x, start.y);
+                this.ctx.lineTo(end.x, end.y);
+                this.ctx.stroke();
+                
+                this.cityData.roads.push({
+                    start: start,
+                    end: end,
+                    type: roadType,
+                    direction: 'triangulation'
+                });
+            }
+        }
+    }
+    
+    generateArterialNetwork(size) {
+        const numArterials = size === 'small' ? 6 : size === 'medium' ? 8 : 10;
+        const roadType = this.roadTypes.arterial;
+        
+        // Generate arterial nodes
+        const arterialNodes = [];
+        for (let i = 0; i < numArterials; i++) {
+            arterialNodes.push({
+                x: Math.random() * this.canvas.width,
+                y: Math.random() * this.canvas.height
+            });
+        }
+        
+        // Create Minimum Spanning Tree for arterials
+        const mst = this.createMinimumSpanningTree(arterialNodes);
+        
+        // Draw arterial roads using MST
+        this.drawMSTRoads(mst, roadType);
+    }
+    
+    createMinimumSpanningTree(nodes) {
+        const edges = [];
+        
+        // Create all possible edges
+        for (let i = 0; i < nodes.length; i++) {
+            for (let j = i + 1; j < nodes.length; j++) {
+                const distance = Math.sqrt(
+                    Math.pow(nodes[i].x - nodes[j].x, 2) + 
+                    Math.pow(nodes[i].y - nodes[j].y, 2)
+                );
+                edges.push({
+                    from: i,
+                    to: j,
+                    distance: distance
+                });
+            }
+        }
+        
+        // Sort edges by distance
+        edges.sort((a, b) => a.distance - b.distance);
+        
+        // Kruskal's algorithm
+        const mst = [];
+        const parent = Array(nodes.length).fill().map((_, i) => i);
+        
+        const find = (x) => {
+            if (parent[x] !== x) {
+                parent[x] = find(parent[x]);
+            }
+            return parent[x];
+        };
+        
+        const union = (x, y) => {
+            parent[find(x)] = find(y);
+        };
+        
+        for (const edge of edges) {
+            if (find(edge.from) !== find(edge.to)) {
+                mst.push({
+                    start: nodes[edge.from],
+                    end: nodes[edge.to]
+                });
+                union(edge.from, edge.to);
+            }
+        }
+        
+        return mst;
+    }
+    
+    drawMSTRoads(mst, roadType) {
+        this.ctx.strokeStyle = roadType.color;
+        this.ctx.lineWidth = roadType.width;
+        this.ctx.lineCap = 'round';
+        
+        for (const edge of mst) {
+            this.ctx.beginPath();
+            this.ctx.moveTo(edge.start.x, edge.start.y);
+            this.ctx.lineTo(edge.end.x, edge.end.y);
+            this.ctx.stroke();
+            
+            this.cityData.roads.push({
+                start: edge.start,
+                end: edge.end,
+                type: roadType,
+                direction: 'mst'
+            });
+        }
+    }
+    
+    generateCollectorNetwork(size) {
+        const numCollectors = size === 'small' ? 12 : size === 'medium' ? 16 : 20;
+        const roadType = this.roadTypes.collector;
+        
+        // Generate collector nodes
+        const collectorNodes = [];
+        for (let i = 0; i < numCollectors; i++) {
+            collectorNodes.push({
+                x: Math.random() * this.canvas.width,
+                y: Math.random() * this.canvas.height
+            });
+        }
+        
+        // Create K-nearest neighbors network
+        const knnEdges = this.createKNearestNeighbors(collectorNodes, 3);
+        
+        // Draw collector roads using KNN
+        this.drawKNNRoads(knnEdges, roadType);
+    }
+    
+    createKNearestNeighbors(nodes, k) {
+        const edges = [];
+        
+        for (let i = 0; i < nodes.length; i++) {
+            const distances = [];
+            
+            // Calculate distances to all other nodes
+            for (let j = 0; j < nodes.length; j++) {
+                if (i !== j) {
+                    const distance = Math.sqrt(
+                        Math.pow(nodes[i].x - nodes[j].x, 2) + 
+                        Math.pow(nodes[i].y - nodes[j].y, 2)
+                    );
+                    distances.push({index: j, distance: distance});
+                }
+            }
+            
+            // Sort by distance and take k nearest
+            distances.sort((a, b) => a.distance - b.distance);
+            
+            for (let j = 0; j < Math.min(k, distances.length); j++) {
+                const neighbor = distances[j];
+                // Only add edge if i < neighbor.index to avoid duplicates
+                if (i < neighbor.index) {
+                    edges.push({
+                        start: nodes[i],
+                        end: nodes[neighbor.index]
+                    });
+                }
+            }
+        }
+        
+        return edges;
+    }
+    
+    drawKNNRoads(knnEdges, roadType) {
+        this.ctx.strokeStyle = roadType.color;
+        this.ctx.lineWidth = roadType.width;
+        this.ctx.lineCap = 'round';
+        
+        for (const edge of knnEdges) {
+            this.ctx.beginPath();
+            this.ctx.moveTo(edge.start.x, edge.start.y);
+            this.ctx.lineTo(edge.end.x, edge.end.y);
+            this.ctx.stroke();
+            
+            this.cityData.roads.push({
+                start: edge.start,
+                end: edge.end,
+                type: roadType,
+                direction: 'knn'
+            });
+        }
+    }
+    
+    generateLocalStreetNetwork(size) {
+        const numLocals = size === 'small' ? 20 : size === 'medium' ? 30 : 40;
+        const roadType = this.roadTypes.local;
+        
+        // Generate local street nodes
+        const localNodes = [];
+        for (let i = 0; i < numLocals; i++) {
+            localNodes.push({
+                x: Math.random() * this.canvas.width,
+                y: Math.random() * this.canvas.height
+            });
+        }
+        
+        // Create sparse KNN for local streets
+        const localEdges = this.createKNearestNeighbors(localNodes, 2);
+        
+        // Draw local streets
+        this.drawKNNRoads(localEdges, roadType);
+    }
+    
+    generateOrganicRoadNetwork(size) {
+        // Generate organic roads using Delaunay + MST
+        this.generateArterialNetwork(size);
+        this.generateCollectorNetwork(size);
+        this.generateLocalStreetNetwork(size);
+    }
+    
+    generateRadialRoadNetwork(size) {
+        const centerX = this.canvas.width / 2;
+        const centerY = this.canvas.height / 2;
+        const numRadials = size === 'small' ? 6 : size === 'medium' ? 8 : 12;
         const roadType = this.roadTypes.highway;
         
         this.ctx.strokeStyle = roadType.color;
         this.ctx.lineWidth = roadType.width;
         this.ctx.lineCap = 'round';
         
-        // Major highways with slight curves for realism
-        const highways = [];
-        
-        // Horizontal highways with gentle curves
-        for (let y = spacing; y < this.canvas.height; y += spacing * 2) {
-            const highway = this.createCurvedRoad(0, y, this.canvas.width, y, roadType, 0.1);
-            this.drawCurvedRoad(highway, roadType);
-            highways.push(highway);
+        for (let i = 0; i < numRadials; i++) {
+            const angle = (i / numRadials) * 2 * Math.PI;
+            const endX = centerX + Math.cos(angle) * this.canvas.width * 0.8;
+            const endY = centerY + Math.sin(angle) * this.canvas.height * 0.8;
+            
+            this.ctx.beginPath();
+            this.ctx.moveTo(centerX, centerY);
+            this.ctx.lineTo(endX, endY);
+            this.ctx.stroke();
+            
+            this.cityData.roads.push({
+                start: {x: centerX, y: centerY},
+                end: {x: endX, y: endY},
+                type: roadType,
+                direction: 'radial'
+            });
         }
-        
-        // Vertical highways with gentle curves
-        for (let x = spacing; x < this.canvas.width; x += spacing * 2) {
-            const highway = this.createCurvedRoad(x, 0, x, this.canvas.height, roadType, 0.1);
-            this.drawCurvedRoad(highway, roadType);
-            highways.push(highway);
-        }
-        
-        highways.forEach(highway => {
-            this.cityData.roads.push(highway);
-        });
     }
     
-    generateArterialRoads(size) {
-        const spacing = size === 'small' ? 80 : size === 'medium' ? 60 : 50;
-        const roadType = this.roadTypes.arterial;
+    generateSpiralRoadNetwork(size) {
+        const centerX = this.canvas.width / 2;
+        const centerY = this.canvas.height / 2;
+        const maxRadius = Math.min(this.canvas.width, this.canvas.height) / 2;
+        const roadType = this.roadTypes.highway;
         
         this.ctx.strokeStyle = roadType.color;
         this.ctx.lineWidth = roadType.width;
+        this.ctx.lineCap = 'round';
         
-        // Arterial roads between highways with curves
-        const arterials = [];
-        
-        // Horizontal arterials
-        for (let y = spacing; y < this.canvas.height; y += spacing) {
-            if (y % (spacing * 2) !== 0) { // Avoid overlapping with highways
-                const arterial = this.createCurvedRoad(0, y, this.canvas.width, y, roadType, 0.15);
-                this.drawCurvedRoad(arterial, roadType);
-                arterials.push(arterial);
-            }
-        }
-        
-        // Vertical arterials
-        for (let x = spacing; x < this.canvas.width; x += spacing) {
-            if (x % (spacing * 2) !== 0) { // Avoid overlapping with highways
-                const arterial = this.createCurvedRoad(x, 0, x, this.canvas.height, roadType, 0.15);
-                this.drawCurvedRoad(arterial, roadType);
-                arterials.push(arterial);
-            }
-        }
-        
-        arterials.forEach(arterial => {
-            this.cityData.roads.push(arterial);
-        });
-    }
-    
-    generateCollectorRoads(size) {
-        const spacing = size === 'small' ? 60 : size === 'medium' ? 40 : 30;
-        const roadType = this.roadTypes.collector;
-        
-        this.ctx.strokeStyle = roadType.color;
-        this.ctx.lineWidth = roadType.width;
-        
-        // Collector roads with more organic curves
-        const collectors = [];
-        
-        for (let x = spacing; x < this.canvas.width; x += spacing) {
-            for (let y = spacing; y < this.canvas.height; y += spacing) {
-                if (Math.random() < 0.3) { // 30% chance of collector road
-                    const endX = x + spacing;
-                    const endY = y + spacing;
-                    
-                    if (endX < this.canvas.width && endY < this.canvas.height) {
-                        const collector = this.createCurvedRoad(x, y, endX, endY, roadType, 0.2);
-                        this.drawCurvedRoad(collector, roadType);
-                        collectors.push(collector);
-                    }
-                }
-            }
-        }
-        
-        collectors.forEach(collector => {
-            this.cityData.roads.push(collector);
-        });
-    }
-    
-    generateLocalStreets(size) {
-        const spacing = size === 'small' ? 40 : size === 'medium' ? 30 : 25;
-        const roadType = this.roadTypes.local;
-        
-        this.ctx.strokeStyle = roadType.color;
-        this.ctx.lineWidth = roadType.width;
-        
-        // Local streets with organic curves
-        const locals = [];
-        
-        for (let x = spacing; x < this.canvas.width; x += spacing) {
-            for (let y = spacing; y < this.canvas.height; y += spacing) {
-                if (Math.random() < 0.2) { // 20% chance of local street
-                    const endX = x + spacing;
-                    const endY = y + spacing;
-                    
-                    if (endX < this.canvas.width && endY < this.canvas.height) {
-                        const local = this.createCurvedRoad(x, y, endX, endY, roadType, 0.25);
-                        this.drawCurvedRoad(local, roadType);
-                        locals.push(local);
-                    }
-                }
-            }
-        }
-        
-        locals.forEach(local => {
-            this.cityData.roads.push(local);
-        });
-    }
-    
-    createCurvedRoad(startX, startY, endX, endY, roadType, curveIntensity) {
-        // Create a curved road using control points
-        const midX = (startX + endX) / 2;
-        const midY = (startY + endY) / 2;
-        
-        // Add random offset for natural curves
-        const offsetX = (Math.random() - 0.5) * curveIntensity * Math.abs(endX - startX);
-        const offsetY = (Math.random() - 0.5) * curveIntensity * Math.abs(endY - startY);
-        
-        const controlX = midX + offsetX;
-        const controlY = midY + offsetY;
-        
-        return {
-            start: { x: startX, y: startY },
-            control: { x: controlX, y: controlY },
-            end: { x: endX, y: endY },
-            type: roadType,
-            direction: 'curved'
-        };
-    }
-    
-    drawCurvedRoad(road, roadType) {
-        // Draw curved road using quadratic curves
         this.ctx.beginPath();
-        this.ctx.moveTo(road.start.x, road.start.y);
-        this.ctx.quadraticCurveTo(road.control.x, road.control.y, road.end.x, road.end.y);
+        this.ctx.moveTo(centerX, centerY);
+        
+        for (let angle = 0; angle < 6 * Math.PI; angle += 0.1) {
+            const radius = (angle / (6 * Math.PI)) * maxRadius;
+            const x = centerX + radius * Math.cos(angle);
+            const y = centerY + radius * Math.sin(angle);
+            this.ctx.lineTo(x, y);
+        }
+        
         this.ctx.stroke();
         
-        // Draw lane dividers
-        this.drawCurvedLaneDividers(road, roadType);
+        this.cityData.roads.push({
+            start: {x: centerX, y: centerY},
+            end: {x: centerX, y: centerY},
+            type: roadType,
+            direction: 'spiral'
+        });
     }
     
-    drawCurvedLaneDividers(road, roadType) {
-        const laneWidth = roadType.width / roadType.lanes;
+    generateFractalRoadNetwork(size) {
+        this.generateFractalBranch(this.canvas.width / 2, this.canvas.height / 2, 
+                                  Math.min(this.canvas.width, this.canvas.height) / 3, 0, 4);
+    }
+    
+    generateFractalBranch(x, y, length, angle, depth) {
+        if (depth === 0) return;
         
-        this.ctx.strokeStyle = '#ffffff';
-        this.ctx.lineWidth = 1;
+        const endX = x + length * Math.cos(angle);
+        const endY = y + length * Math.sin(angle);
         
-        for (let i = 1; i < roadType.lanes; i++) {
-            const offset = (i * laneWidth) - (roadType.width / 2);
-            
-            // Draw parallel curve for lane divider
-            this.ctx.beginPath();
-            this.ctx.moveTo(road.start.x, road.start.y + offset);
-            this.ctx.quadraticCurveTo(road.control.x, road.control.y + offset, road.end.x, road.end.y + offset);
-            this.ctx.stroke();
-        }
+        const roadType = depth > 2 ? this.roadTypes.arterial : 
+                        depth > 1 ? this.roadTypes.collector : this.roadTypes.local;
         
-        // Reset stroke style
         this.ctx.strokeStyle = roadType.color;
         this.ctx.lineWidth = roadType.width;
+        this.ctx.lineCap = 'round';
+        
+        this.ctx.beginPath();
+        this.ctx.moveTo(x, y);
+        this.ctx.lineTo(endX, endY);
+        this.ctx.stroke();
+        
+        this.cityData.roads.push({
+            start: {x: x, y: y},
+            end: {x: endX, y: endY},
+            type: roadType,
+            direction: 'fractal'
+        });
+        
+        const newLength = length * 0.7;
+        this.generateFractalBranch(endX, endY, newLength, angle + Math.PI/4, depth - 1);
+        this.generateFractalBranch(endX, endY, newLength, angle - Math.PI/4, depth - 1);
+    }
+    
+    generateMixedRoadNetwork(size) {
+        this.generateGridRoadNetwork(size);
+        this.generateOrganicRoadNetwork(size);
     }
     
     generateInterchanges() {
@@ -409,7 +695,7 @@ class CityGenerator {
         highways.forEach(highway1 => {
             highways.forEach(highway2 => {
                 if (highway1 !== highway2) {
-                    const intersection = this.findCurvedRoadIntersection(highway1, highway2);
+                    const intersection = this.findRoadIntersection(highway1, highway2);
                     if (intersection) {
                         this.drawInterchange(intersection);
                     }
@@ -418,14 +704,14 @@ class CityGenerator {
         });
     }
     
-    findCurvedRoadIntersection(road1, road2) {
-        // Simplified intersection detection for curved roads
+    findRoadIntersection(road1, road2) {
+        // Simple intersection detection
         const mid1 = { x: (road1.start.x + road1.end.x) / 2, y: (road1.start.y + road1.end.y) / 2 };
         const mid2 = { x: (road2.start.x + road2.end.x) / 2, y: (road2.start.y + road2.end.y) / 2 };
         
         const distance = Math.sqrt((mid1.x - mid2.x) ** 2 + (mid1.y - mid2.y) ** 2);
         
-        if (distance < 50) { // If roads are close enough
+        if (distance < 50) {
             return { x: (mid1.x + mid2.x) / 2, y: (mid1.y + mid2.y) / 2 };
         }
         
@@ -458,156 +744,15 @@ class CityGenerator {
         }
     }
     
-    generateOrganicRoadNetwork(size) {
-        // Generate organic roads with natural curves
-        this.generateOrganicArterials(size);
-        this.generateOrganicCollectors(size);
-        this.generateOrganicLocals(size);
-    }
-    
-    generateOrganicArterials(size) {
-        const numArterials = size === 'small' ? 4 : size === 'medium' ? 6 : 8;
-        const roadType = this.roadTypes.arterial;
-        
-        this.ctx.strokeStyle = roadType.color;
-        this.ctx.lineWidth = roadType.width;
-        
-        for (let i = 0; i < numArterials; i++) {
-            const startX = Math.random() * this.canvas.width;
-            const startY = Math.random() * this.canvas.height;
-            const endX = Math.random() * this.canvas.width;
-            const endY = Math.random() * this.canvas.height;
-            
-            const arterial = this.createCurvedRoad(startX, startY, endX, endY, roadType, 0.3);
-            this.drawCurvedRoad(arterial, roadType);
-            this.cityData.roads.push(arterial);
-        }
-    }
-    
-    generateOrganicCollectors(size) {
-        const numCollectors = size === 'small' ? 8 : size === 'medium' ? 12 : 16;
-        const roadType = this.roadTypes.collector;
-        
-        this.ctx.strokeStyle = roadType.color;
-        this.ctx.lineWidth = roadType.width;
-        
-        for (let i = 0; i < numCollectors; i++) {
-            const startX = Math.random() * this.canvas.width;
-            const startY = Math.random() * this.canvas.height;
-            const endX = Math.random() * this.canvas.width;
-            const endY = Math.random() * this.canvas.height;
-            
-            const collector = this.createCurvedRoad(startX, startY, endX, endY, roadType, 0.4);
-            this.drawCurvedRoad(collector, roadType);
-            this.cityData.roads.push(collector);
-        }
-    }
-    
-    generateOrganicLocals(size) {
-        const numLocals = size === 'small' ? 15 : size === 'medium' ? 25 : 35;
-        const roadType = this.roadTypes.local;
-        
-        this.ctx.strokeStyle = roadType.color;
-        this.ctx.lineWidth = roadType.width;
-        
-        for (let i = 0; i < numLocals; i++) {
-            const startX = Math.random() * this.canvas.width;
-            const startY = Math.random() * this.canvas.height;
-            const endX = Math.random() * this.canvas.width;
-            const endY = Math.random() * this.canvas.height;
-            
-            const local = this.createCurvedRoad(startX, startY, endX, endY, roadType, 0.5);
-            this.drawCurvedRoad(local, roadType);
-            this.cityData.roads.push(local);
-        }
-    }
-    
-    generateRadialRoadNetwork(size) {
-        const centerX = this.canvas.width / 2;
-        const centerY = this.canvas.height / 2;
-        const numRadials = size === 'small' ? 6 : size === 'medium' ? 8 : 12;
-        const roadType = this.roadTypes.highway;
-        
-        this.ctx.strokeStyle = roadType.color;
-        this.ctx.lineWidth = roadType.width;
-        
-        for (let i = 0; i < numRadials; i++) {
-            const angle = (i / numRadials) * 2 * Math.PI;
-            const endX = centerX + Math.cos(angle) * this.canvas.width * 0.8;
-            const endY = centerY + Math.sin(angle) * this.canvas.height * 0.8;
-            
-            const radial = this.createCurvedRoad(centerX, centerY, endX, endY, roadType, 0.2);
-            this.drawCurvedRoad(radial, roadType);
-            
-            this.cityData.roads.push(radial);
-        }
-    }
-    
-    generateSpiralRoadNetwork(size) {
-        const centerX = this.canvas.width / 2;
-        const centerY = this.canvas.height / 2;
-        const maxRadius = Math.min(this.canvas.width, this.canvas.height) / 2;
-        const roadType = this.roadTypes.highway;
-        
-        this.ctx.strokeStyle = roadType.color;
-        this.ctx.lineWidth = roadType.width;
-        
-        // Generate spiral using multiple curved segments
-        const spiralPoints = [];
-        for (let angle = 0; angle < 6 * Math.PI; angle += 0.5) {
-            const radius = (angle / (6 * Math.PI)) * maxRadius;
-            const x = centerX + radius * Math.cos(angle);
-            const y = centerY + radius * Math.sin(angle);
-            spiralPoints.push({x: x, y: y});
-        }
-        
-        // Draw spiral as connected curved segments
-        for (let i = 0; i < spiralPoints.length - 1; i++) {
-            const start = spiralPoints[i];
-            const end = spiralPoints[i + 1];
-            
-            const spiral = this.createCurvedRoad(start.x, start.y, end.x, end.y, roadType, 0.1);
-            this.drawCurvedRoad(spiral, roadType);
-            
-            this.cityData.roads.push(spiral);
-        }
-    }
-    
-    generateFractalRoadNetwork(size) {
-        this.generateFractalBranch(this.canvas.width / 2, this.canvas.height / 2, 
-                                  Math.min(this.canvas.width, this.canvas.height) / 3, 0, 4);
-    }
-    
-    generateFractalBranch(x, y, length, angle, depth) {
-        if (depth === 0) return;
-        
-        const endX = x + length * Math.cos(angle);
-        const endY = y + length * Math.sin(angle);
-        
-        const roadType = depth > 2 ? this.roadTypes.arterial : 
-                        depth > 1 ? this.roadTypes.collector : this.roadTypes.local;
-        
-        const fractal = this.createCurvedRoad(x, y, endX, endY, roadType, 0.3);
-        this.drawCurvedRoad(fractal, roadType);
-        
-        this.cityData.roads.push(fractal);
-        
-        const newLength = length * 0.7;
-        this.generateFractalBranch(endX, endY, newLength, angle + Math.PI/4, depth - 1);
-        this.generateFractalBranch(endX, endY, newLength, angle - Math.PI/4, depth - 1);
-    }
-    
-    generateMixedRoadNetwork(size) {
-        this.generateRealisticGrid(size);
-        this.generateOrganicRoadNetwork(size);
-    }
-    
-    generateBuildings(style, size, density) {
+    generatePoissonDiscBuildings(style, size, density) {
         const baseNumBuildings = size === 'small' ? 20 : size === 'medium' ? 35 : 50;
         const numBuildings = Math.floor(baseNumBuildings * density);
         
-        for (let i = 0; i < numBuildings; i++) {
-            const building = this.createBuilding(style, size);
+        // Generate building positions using Poisson-disc sampling
+        const buildingPositions = this.generatePoissonDiscSampling(numBuildings, 30);
+        
+        for (const position of buildingPositions) {
+            const building = this.createBuildingAtPosition(position, style, size);
             if (building) {
                 this.drawBuilding(building);
                 this.cityData.buildings.push(building);
@@ -615,28 +760,113 @@ class CityGenerator {
         }
     }
     
-    createBuilding(style, size) {
+    generatePoissonDiscSampling(numPoints, radius) {
+        const points = [];
+        const active = [];
+        const grid = {};
+        const cellSize = radius / Math.sqrt(2);
+        
+        // Initialize grid
+        const gridWidth = Math.ceil(this.canvas.width / cellSize);
+        const gridHeight = Math.ceil(this.canvas.height / cellSize);
+        
+        // Add first point
+        const firstPoint = {
+            x: Math.random() * this.canvas.width,
+            y: Math.random() * this.canvas.height
+        };
+        
+        points.push(firstPoint);
+        active.push(firstPoint);
+        
+        const gridX = Math.floor(firstPoint.x / cellSize);
+        const gridY = Math.floor(firstPoint.y / cellSize);
+        grid[`${gridX},${gridY}`] = firstPoint;
+        
+        while (active.length > 0 && points.length < numPoints) {
+            const pointIndex = Math.floor(Math.random() * active.length);
+            const point = active[pointIndex];
+            
+            let success = false;
+            
+            // Try to generate new points around this point
+            for (let i = 0; i < 30; i++) {
+                const angle = Math.random() * 2 * Math.PI;
+                const distance = radius + Math.random() * radius;
+                const newPoint = {
+                    x: point.x + Math.cos(angle) * distance,
+                    y: point.y + Math.sin(angle) * distance
+                };
+                
+                // Check if point is within canvas bounds
+                if (newPoint.x < 0 || newPoint.x >= this.canvas.width ||
+                    newPoint.y < 0 || newPoint.y >= this.canvas.height) {
+                    continue;
+                }
+                
+                // Check if point is far enough from existing points
+                const gridX = Math.floor(newPoint.x / cellSize);
+                const gridY = Math.floor(newPoint.y / cellSize);
+                
+                let tooClose = false;
+                
+                for (let dx = -2; dx <= 2; dx++) {
+                    for (let dy = -2; dy <= 2; dy++) {
+                        const checkX = gridX + dx;
+                        const checkY = gridY + dy;
+                        const existingPoint = grid[`${checkX},${checkY}`];
+                        
+                        if (existingPoint) {
+                            const distance = Math.sqrt(
+                                Math.pow(newPoint.x - existingPoint.x, 2) + 
+                                Math.pow(newPoint.y - existingPoint.y, 2)
+                            );
+                            if (distance < radius) {
+                                tooClose = true;
+                                break;
+                            }
+                        }
+                    }
+                    if (tooClose) break;
+                }
+                
+                if (!tooClose) {
+                    points.push(newPoint);
+                    active.push(newPoint);
+                    grid[`${gridX},${gridY}`] = newPoint;
+                    success = true;
+                    break;
+                }
+            }
+            
+            if (!success) {
+                active.splice(pointIndex, 1);
+            }
+        }
+        
+        return points;
+    }
+    
+    createBuildingAtPosition(position, style, size) {
         const minSize = size === 'small' ? 12 : size === 'medium' ? 15 : 20;
         const maxSize = size === 'small' ? 30 : size === 'medium' ? 40 : 50;
         
         const width = minSize + Math.random() * (maxSize - minSize);
         const height = minSize + Math.random() * (maxSize - minSize);
         
-        for (let attempts = 0; attempts < 50; attempts++) {
-            const x = Math.random() * (this.canvas.width - width);
-            const y = Math.random() * (this.canvas.height - height);
-            
-            if (!this.isOnRoad(x, y, width, height) && !this.isOnWater(x, y, width, height)) {
-                return {
-                    x: x,
-                    y: y,
-                    width: width,
-                    height: height,
-                    style: style,
-                    color: this.getBuildingColor(style),
-                    floors: Math.floor(Math.random() * 3) + 1
-                };
-            }
+        const x = position.x - width / 2;
+        const y = position.y - height / 2;
+        
+        if (!this.isOnRoad(x, y, width, height) && !this.isOnWater(x, y, width, height)) {
+            return {
+                x: x,
+                y: y,
+                width: width,
+                height: height,
+                style: style,
+                color: this.getBuildingColor(style),
+                floors: Math.floor(Math.random() * 3) + 1
+            };
         }
         
         return null;
@@ -645,7 +875,6 @@ class CityGenerator {
     isOnRoad(x, y, width, height) {
         const roadBuffer = 15;
         for (let road of this.cityData.roads) {
-            // Check if building intersects with road path
             const roadStart = road.start;
             const roadEnd = road.end;
             
